@@ -1,0 +1,85 @@
+Hãy tạo một dự án Python hoàn chỉnh phân tích hành vi 
+bình luận độc hại trên mạng xã hội Việt Nam.
+
+=== MỤC TIÊU DỰ ÁN ===
+Phân tích hành vi toxic trong bình luận mạng xã hội 
+tiếng Việt dựa trên dataset ViHSD và dữ liệu tự thu thập 
+từ YouTube.
+
+=== CẤU TRÚC DỰ ÁN ===
+toxic_analysis/
+├── main.py                  # file chạy chính
+├── collect/
+│   ├── youtube_scraper.py   # thu thập bình luận YouTube
+│   └── vihsd_loader.py      # tải dataset ViHSD
+├── process/
+│   ├── clean_data.py        # làm sạch dữ liệu
+│   └── label_data.py        # gán nhãn tự động bằng Gemini
+├── analyze/
+│   ├── statistics.py        # thống kê mô tả
+│   └── visualize.py         # trực quan hóa
+├── data/
+│   ├── train.csv            # dataset ViHSD train
+│   ├── dev.csv              # dataset ViHSD dev
+│   ├── test.csv             # dataset ViHSD test
+│   └── collected/           # dữ liệu tự thu thập
+└── output/
+    ├── charts/              # biểu đồ xuất ra
+    └── results.csv          # kết quả phân tích
+
+=== THƯ VIỆN SỬ DỤNG ===
+- pandas, numpy               # xử lý dữ liệu
+- google-api-python-client    # YouTube Data API
+- google-generativeai         # Gemini API gán nhãn
+- underthesea                 # NLP tiếng Việt
+- matplotlib, seaborn         # biểu đồ
+- wordcloud                   # đám mây từ
+- tenacity                    # retry mechanism
+- tqdm                        # progress bar
+
+=== API KEYS ===
+- YOUTUBE_API_KEY = (lưu trong .env)
+- GEMINI_API_KEY  = (lưu trong .env)
+
+=== CHI TIẾT TỪNG BƯỚC ===
+
+BƯỚC 1 - THU THẬP DỮ LIỆU:
+- Dùng YouTube Data API lấy bình luận từ video 
+  tiếng Việt nổi tiếng (mỗi video tối đa 500 bình luận)
+- Kết hợp với dataset ViHSD có sẵn (train/dev/test.csv)
+- Lưu tất cả vào data/collected/
+
+BƯỚC 2 - LÀM SẠCH DỮ LIỆU:
+- Xóa dòng trống, duplicate
+- Chuẩn hóa tiếng Việt bằng underthesea
+- Xóa link, emoji thừa, ký tự đặc biệt
+- Xử lý viết tắt toxic: dcm, vl, dm...
+
+BƯỚC 3 - GÁN NHÃN TỰ ĐỘNG:
+- Dùng Gemini API gán nhãn dữ liệu tự thu thập
+- Nhãn: CLEAN / OFFENSIVE / HATE
+- Lưu kết quả vào CSV
+
+BƯỚC 4 - PHÂN TÍCH & THỐNG KÊ:
+- Tỷ lệ % CLEAN / OFFENSIVE / HATE
+- Top 20 từ toxic phổ biến nhất
+- Phân tích theo thời gian (giờ/ngày)
+- So sánh mức độ toxic giữa YouTube và ViHSD
+
+BƯỚC 5 - TRỰC QUAN HÓA:
+- Biểu đồ cột: phân phối nhãn
+- Biểu đồ tròn: tỷ lệ toxic vs clean
+- WordCloud riêng cho HATE, OFFENSIVE, CLEAN
+- Biểu đồ đường: toxic theo thời gian
+- Lưu tất cả chart vào output/charts/
+
+=== MỞ RỘNG TƯƠNG LAI ===
+- Có thể thêm Reddit (dùng PRAW API, miễn phí)
+- Có thể thêm TikTok (dùng Apify hoặc TikTokApi)
+
+=== YÊU CẦU KỸ THUẬT ===
+- Mỗi file có comment giải thích rõ ràng bằng tiếng Việt
+- Có xử lý lỗi try/except đầy đủ
+- Có in log tiến trình khi chạy
+- Code sạch, dễ đọc, có thể chạy được ngay
+- main.py chạy toàn bộ pipeline từ đầu đến cuối
