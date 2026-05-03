@@ -1,0 +1,14 @@
+.venv/
+.env
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vs/
+
+toxic_analysis/.env
+toxic_analysis/run.log
+toxic_analysis/data/collected/
+toxic_analysis/output/
