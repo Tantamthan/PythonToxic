@@ -34,6 +34,14 @@ Batch lỗi sẽ được đánh dấu `LABEL_ERROR`, không bị gán nhầm th
 - `..\vihsd\`: chứa `train.csv`, `dev.csv`, `test.csv` hoặc các file dạng `._train.csv`, `._dev.csv`, `._test.csv`.
 - `data\collected\`: cache dữ liệu YouTube/Reddit và nhãn Gemini.
 - `output\`: kết quả CSV và biểu đồ.
+- `output\summary.json`: báo cáo tóm tắt để dùng lại cho dashboard hoặc báo cáo HTML/PDF.
+
+## Tinh chỉnh dữ liệu
+
+- Dữ liệu YouTube/Reddit lưu thêm `comment_id` và `author` nếu nền tảng trả về.
+- Cache gán nhãn dùng `record_key` để di chuyển/xóa đúng bình luận đã xử lý, tránh xóa nhầm các dòng có cùng nội dung ở nguồn khác.
+- Bước làm sạch xóa trùng theo `text + source`, không còn gộp toàn bộ chỉ theo nội dung bình luận.
+- Reddit mặc định lọc bình luận có vẻ là tiếng Việt. Nếu cần lấy cả tiếng Anh/song ngữ, thêm `--reddit-allow-non-vi`.
 
 ## File cấu hình
 
@@ -49,3 +57,32 @@ REDDIT_USER_AGENT=toxic-analysis/1.0
 ```
 
 Xem thêm `..\README.md` và `..\docs\DATA_SCHEMA.md`.
+
+## Manual labeling khi Gemini hết quota
+
+Xuất 100 comment Reddit chưa gắn nhãn ra file để điền tay:
+
+```powershell
+.\.venv\Scripts\python.exe .\toxic_analysis\process\manual_label.py export --limit 100
+```
+
+Mở `toxic_analysis\data\collected\manual_review.csv`, điền cột `label` bằng một trong:
+
+```text
+CLEAN
+OFFENSIVE
+HATE
+```
+
+Nhập lại các dòng đã điền nhãn:
+
+```powershell
+.\.venv\Scripts\python.exe .\toxic_analysis\process\manual_label.py import
+```
+
+Script sẽ thêm dòng đã gắn nhãn vào `labeled_collected.csv` và xóa các dòng đó khỏi `reddit_comments.csv`.
+Kiểm tra trạng thái hiện tại:
+
+```powershell
+.\.venv\Scripts\python.exe .\toxic_analysis\process\manual_label.py status
+```

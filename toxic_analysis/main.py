@@ -16,6 +16,7 @@ Chạy: python main.py
 import os
 import sys
 import time
+import json
 import logging
 import argparse
 import pandas as pd
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 # ─── IMPORT CÁC MODULE NỘI BỘ ───────────────────────────────────────────────
 from collect.youtube_scraper import thu_thap_youtube
-from collect.reddit_scraper  import thu_thap_reddit
+from collect.reddit_scraper  import thu_thap_reddit, la_binh_luan_tieng_viet
 from collect.vihsd_loader    import tai_vihsd
 from process.clean_data      import lam_sach_dataframe
 from process.label_data      import gan_nhan_gemini, phan_loai_va_di_chuyen
@@ -93,6 +94,43 @@ def _luu_ket_qua(df: pd.DataFrame, path: str):
     logger.info(f"✓ Đã lưu kết quả → {path}")
 
 
+def _luu_bao_cao_tom_tat(df: pd.DataFrame, saved_charts: list[str], path: str):
+    """Lưu báo cáo tóm tắt dạng JSON để dashboard/report có thể dùng lại."""
+    label_counts = df["label"].value_counts().reindex(["CLEAN", "OFFENSIVE", "HATE"], fill_value=0)
+    source_counts = df["source"].value_counts().to_dict() if "source" in df.columns else {}
+
+    toxic_by_source = {}
+    if "source" in df.columns:
+        tmp = df.copy()
+        tmp["is_toxic"] = tmp["label"].isin(["OFFENSIVE", "HATE"])
+        toxic_by_source = (
+            tmp.groupby("source")["is_toxic"]
+            .agg(total="count", toxic="sum", toxic_rate="mean")
+            .reset_index()
+            .assign(toxic_rate_pct=lambda x: (x["toxic_rate"] * 100).round(2))
+            .drop(columns=["toxic_rate"])
+            .to_dict(orient="records")
+        )
+
+    report = {
+        "total_rows": int(len(df)),
+        "label_distribution": {
+            label: {
+                "count": int(count),
+                "pct": round(float(count / len(df) * 100), 2) if len(df) else 0.0,
+            }
+            for label, count in label_counts.items()
+        },
+        "source_distribution": {str(k): int(v) for k, v in source_counts.items()},
+        "toxic_by_source": toxic_by_source,
+        "charts": [str(p) for p in saved_charts],
+    }
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    logger.info(f"✓ Đã lưu báo cáo tóm tắt → {path}")
+
+
 # ─── BƯỚC 1: THU THẬP DỮ LIỆU ──────────────────────────────────────────────
 
 def buoc_1_thu_thap(
@@ -102,7 +140,8 @@ def buoc_1_thu_thap(
     video_ids: list = None,
     reddit_subreddits: list = None,
     reddit_sort: str = "hot",
-    reddit_max_posts: int = 50
+    reddit_max_posts: int = 50,
+    reddit_vi_only: bool = True
 ) -> pd.DataFrame:
     """
     Thu thập dữ liệu từ YouTube, Reddit và tải ViHSD.
@@ -115,6 +154,7 @@ def buoc_1_thu_thap(
         reddit_subreddits: Danh sách subreddit tùy chỉnh
         reddit_sort: Cách sắp xếp bài Reddit (hot/new/top/controversial)
         reddit_max_posts: Số bài viết tối đa mỗi subreddit
+        reddit_vi_only: Chỉ giữ bình luận Reddit có vẻ là tiếng Việt
     
     Returns:
         Tuple (DataFrame tổng hợp, DataFrame dữ liệu chưa gán nhãn)
@@ -167,8 +207,20 @@ def buoc_1_thu_thap(
                 subreddits=reddit_subreddits,
                 sort_by=reddit_sort,
                 max_posts_per_sub=reddit_max_posts,
+                only_vietnamese=reddit_vi_only,
                 output_path=str(reddit_cache)
             )
+
+        if reddit_vi_only and not df_reddit.empty and "text" in df_reddit.columns:
+            so_truoc_loc = len(df_reddit)
+            df_reddit = df_reddit[
+                df_reddit["text"].apply(la_binh_luan_tieng_viet)
+            ].copy()
+            so_da_loc = so_truoc_loc - len(df_reddit)
+            if so_da_loc:
+                logger.info(f"  ✓ Đã lọc bỏ {so_da_loc} bình luận Reddit không giống tiếng Việt")
+                df_reddit.to_csv(reddit_cache, index=False, encoding="utf-8-sig")
+                logger.info(f"  ✓ Đã cập nhật lại cache Reddit sau lọc tiếng Việt: {reddit_cache}")
         
         if not df_reddit.empty:
             df_reddit["label"] = None
@@ -223,7 +275,8 @@ def buoc_2_lam_sach(df: pd.DataFrame) -> pd.DataFrame:
         text_col="text",
         giu_emoji=False,
         xoa_trung_lap=True,
-        do_dai_toi_thieu=5
+        do_dai_toi_thieu=5,
+        duplicate_subset=["text", "source"]
     )
     
     logger.info(f"✓ BƯỚC 2 HOÀN TẤT: {len(df_clean)} mẫu sau làm sạch")
@@ -388,6 +441,9 @@ def buoc_5_truc_quan(df: pd.DataFrame, stats: dict):
     # Lưu kết quả tổng hợp
     results_path = OUTPUT_DIR / "results.csv"
     _luu_ket_qua(df, str(results_path))
+
+    summary_path = OUTPUT_DIR / "summary.json"
+    _luu_bao_cao_tom_tat(df, saved_charts, str(summary_path))
     
     # In tóm tắt
     logger.info(f"""
@@ -397,6 +453,7 @@ def buoc_5_truc_quan(df: pd.DataFrame, stats: dict):
 ║  Tổng mẫu phân tích : {len(df):>8,d}                           ║
 ║  Biểu đồ đã tạo     : {len(saved_charts):>8d}                           ║
 ║  Kết quả CSV        : output/results.csv                     ║
+║  Tóm tắt JSON       : output/summary.json                     ║
 ║  Biểu đồ            : output/charts/                         ║
 ╚══════════════════════════════════════════════════════════════╝
 """)
@@ -421,6 +478,7 @@ def chay_pipeline(args):
     logger.info(f"Cấu hình:")
     logger.info(f"  Thu thập YouTube : {'Bật' if not args.no_youtube else 'Tắt'}")
     logger.info(f"  Thu thập Reddit  : {'Bật' if args.reddit else 'Tắt'}")
+    logger.info(f"  Reddit tiếng Việt: {'Bật' if args.reddit_vi_only else 'Tắt'}")
     logger.info(f"  Max/video        : {args.max_per_video}")
     logger.info(f"  ViHSD dir        : {VIHSD_DIR}")
     logger.info(f"  Gán nhãn Gemini  : {'Bật' if not args.no_label else 'Tắt'}")
@@ -439,7 +497,8 @@ def chay_pipeline(args):
         video_ids=args.video_ids if args.video_ids else None,
         reddit_subreddits=args.reddit_subs if args.reddit_subs else None,
         reddit_sort=args.reddit_sort,
-        reddit_max_posts=args.reddit_max_posts
+        reddit_max_posts=args.reddit_max_posts,
+        reddit_vi_only=args.reddit_vi_only
     )
     
     # ── Bước 2: Làm sạch ──────────────────────────────────────────
@@ -503,6 +562,7 @@ Ví dụ sử dụng:
   python main.py --refresh-label-cache         # Gán nhãn lại, bỏ cache cũ
   python main.py --video-ids abc123 def456     # Chỉ định video cụ thể
   python main.py --reddit --reddit-subs VietNam TroChuyenLinhTinh
+  python main.py --reddit --reddit-allow-non-vi # Tắt lọc tiếng Việt Reddit
         """
     )
     
@@ -538,6 +598,10 @@ Ví dụ sử dụng:
     parser.add_argument(
         "--reddit-max-posts", type=int, default=50, dest="reddit_max_posts",
         help="Số bài viết tối đa mỗi subreddit (mặc định: 50)"
+    )
+    parser.add_argument(
+        "--reddit-allow-non-vi", action="store_false", dest="reddit_vi_only",
+        help="Tắt bộ lọc tiếng Việt cho Reddit"
     )
     parser.add_argument(
         "--label-batch-size", type=int, default=25, dest="label_batch_size",

@@ -21,6 +21,7 @@ Pipeline chuẩn hóa dữ liệu về các cột sau.
 | `author` | string | Tác giả đã thu thập được nếu có. |
 | `published_at` | datetime/null | Thời gian đăng bình luận. |
 | `labeled_by` | string | `ViHSD`, `Gemini_AI`, hoặc nguồn nhãn khác. |
+| `record_key` | string | Khóa ổn định dùng cho cache gán nhãn, ưu tiên `source + comment_id`, fallback về `source + parent_id + text`. |
 
 ## Quy ước nhãn
 
@@ -35,3 +36,4 @@ Pipeline chuẩn hóa dữ liệu về các cột sau.
 - Nhãn do Gemini sinh ra chỉ nên xem là nhãn hỗ trợ, không thay thế đánh giá thủ công.
 - Khi dùng cho báo cáo nghiêm túc, nên lấy mẫu ngẫu nhiên để kiểm tra lại nhãn.
 - CSV đầu ra dùng encoding `utf-8-sig` để Excel trên Windows đọc tiếng Việt ổn định hơn.
+- Khi xóa trùng hoặc di chuyển dữ liệu đã gán nhãn, ưu tiên dùng `record_key`/ID nền tảng để tránh gộp nhầm hai bình luận có cùng nội dung ở nguồn khác nhau.

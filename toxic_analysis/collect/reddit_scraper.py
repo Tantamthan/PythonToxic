@@ -9,6 +9,7 @@ Kết quả lưu vào data/collected/reddit_comments.csv
 """
 
 import os
+import re
 import time
 import logging
 import requests
@@ -35,6 +36,54 @@ DEFAULT_SUBREDDITS = [
 
 # Thời gian chờ giữa các request (giây) — tránh bị rate limit
 DELAY_GIAY = 2
+
+VIETNAMESE_DIACRITIC_RE = re.compile(
+    r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩ"
+    r"òóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
+    re.IGNORECASE,
+)
+
+VIETNAMESE_HINT_WORDS = {
+    "anh", "em", "ban", "bạn", "minh", "mình", "toi", "tôi", "tao", "may", "mày",
+    "nguoi", "người", "viet", "việt", "nam", "vn", "vietnam", "khong", "không",
+    "ko", "k", "duoc", "được", "dc", "đc", "la", "là", "co", "có", "cua", "của",
+    "cho", "voi", "với", "trong", "ngoai", "ngoài", "nhung", "nhưng", "neu", "nếu",
+    "thi", "thì", "ma", "mà", "do", "đó", "day", "đây", "nay", "này", "kia",
+    "cai", "cái", "con", "thang", "thằng", "dua", "đứa", "lam", "làm", "noi",
+    "nói", "biet", "biết", "thay", "thấy", "nghi", "nghĩ", "roi", "rồi", "qua",
+    "quá", "rat", "rất", "hon", "hơn", "nua", "nữa", "di", "đi", "ve", "về",
+    "len", "lên", "xuong", "xuống", "dung", "đúng", "sai", "nhieu", "nhiều",
+    "it", "ít", "gi", "gì", "sao", "ai", "dau", "đâu", "nao", "nào", "nhe",
+    "nhé", "nha", "luon", "luôn", "cung", "cũng", "van", "vẫn", "phai", "phải",
+}
+
+
+def la_binh_luan_tieng_viet(text: str) -> bool:
+    """Nhận diện nhanh bình luận tiếng Việt, hỗ trợ cả một phần văn bản không dấu."""
+    if not isinstance(text, str):
+        return False
+
+    text = text.strip().lower()
+    if not text:
+        return False
+
+    tokens = re.findall(r"[a-zA-ZÀ-ỹĐđ]+", text)
+    if not tokens:
+        return False
+
+    hit_count = sum(1 for token in tokens if token in VIETNAMESE_HINT_WORDS)
+    has_diacritic = bool(VIETNAMESE_DIACRITIC_RE.search(text))
+
+    if has_diacritic and hit_count >= 1:
+        return True
+    if has_diacritic and len(tokens) <= 4:
+        return True
+    if hit_count >= 2:
+        return True
+    if hit_count >= 1 and hit_count / len(tokens) >= 0.25:
+        return True
+
+    return False
 
 
 def lay_bai_viet_subreddit(
@@ -87,7 +136,8 @@ def lay_bai_viet_subreddit(
 def lay_binh_luan_bai_viet(
     subreddit_name: str,
     post_id: str,
-    max_comments: int = 100
+    max_comments: int = 100,
+    only_vietnamese: bool = True
 ) -> list[dict]:
     """
     Lấy bình luận từ một bài viết bằng JSON API.
@@ -96,6 +146,7 @@ def lay_binh_luan_bai_viet(
         subreddit_name: Tên subreddit
         post_id: ID bài viết (t3_xxxxx → xxxxx)
         max_comments: Số bình luận tối đa
+        only_vietnamese: Chỉ giữ bình luận có vẻ là tiếng Việt
     
     Returns:
         Danh sách dict chứa bình luận
@@ -117,9 +168,11 @@ def lay_binh_luan_bai_viet(
         
         comments_data = data[1].get("data", {}).get("children", [])
         binh_luan_list = []
+        skipped_non_vi = 0
         
         def parse_comments(comments, depth=0):
             """Đệ quy lấy tất cả bình luận (kể cả reply)"""
+            nonlocal skipped_non_vi
             for comment in comments:
                 if comment.get("kind") != "t1":
                     continue
@@ -135,6 +188,10 @@ def lay_binh_luan_bai_viet(
                 author = c.get("author", "")
                 if author.lower() in ("automoderator", "botdefense", "[deleted]"):
                     continue
+
+                if only_vietnamese and not la_binh_luan_tieng_viet(body):
+                    skipped_non_vi += 1
+                    continue
                 
                 # Chuyển đổi thời gian
                 created_utc = c.get("created_utc", 0)
@@ -143,9 +200,11 @@ def lay_binh_luan_bai_viet(
                 ).isoformat() if created_utc else None
                 
                 binh_luan_list.append({
+                    "comment_id": c.get("id", ""),
                     "subreddit": subreddit_name,
                     "post_id": post_id,
                     "text": body,
+                    "author": author,
                     "score": c.get("score", 0),
                     "published_at": published_at,
                     "source": "reddit"
@@ -161,6 +220,8 @@ def lay_binh_luan_bai_viet(
                     parse_comments(reply_children, depth + 1)
         
         parse_comments(comments_data)
+        if skipped_non_vi:
+            logger.debug(f"    Bỏ qua {skipped_non_vi} bình luận không giống tiếng Việt ở bài {post_id}")
         return binh_luan_list
         
     except Exception as e:
@@ -174,7 +235,8 @@ def thu_thap_reddit(
     max_posts_per_sub: int = 25,
     max_comments_per_post: int = 100,
     time_filter: str = "month",
-    output_path: str = "data/collected/reddit_comments.csv"
+    output_path: str = "data/collected/reddit_comments.csv",
+    only_vietnamese: bool = True
 ) -> pd.DataFrame:
     """
     Thu thập bình luận từ nhiều subreddit tiếng Việt — KHÔNG CẦN API KEY.
@@ -186,6 +248,7 @@ def thu_thap_reddit(
         max_comments_per_post: Số bình luận tối đa mỗi bài
         time_filter: Bộ lọc thời gian cho top/controversial
         output_path: Đường dẫn file CSV lưu kết quả
+        only_vietnamese: Chỉ giữ bình luận có vẻ là tiếng Việt
     
     Returns:
         DataFrame chứa toàn bộ bình luận thu thập được
@@ -197,6 +260,7 @@ def thu_thap_reddit(
     logger.info(f"  Phương thức: Public JSON API (KHÔNG CẦN API KEY)")
     logger.info(f"  Sắp xếp: {sort_by} | Max bài/sub: {max_posts_per_sub} | "
                 f"Max comment/bài: {max_comments_per_post}")
+    logger.info(f"  Lọc tiếng Việt: {'Bật' if only_vietnamese else 'Tắt'}")
     
     tat_ca_binh_luan = []
     
@@ -232,7 +296,8 @@ def thu_thap_reddit(
             comments = lay_binh_luan_bai_viet(
                 subreddit_name=sub_name,
                 post_id=post_id,
-                max_comments=max_comments_per_post
+                max_comments=max_comments_per_post,
+                only_vietnamese=only_vietnamese
             )
             
             # Thêm post_title vào mỗi comment
@@ -258,8 +323,13 @@ def thu_thap_reddit(
         logger.warning("⚠ Không thu thập được bình luận nào từ Reddit!")
         return df
     
-    # Loại bỏ trùng lặp
-    df = df.drop_duplicates(subset=["text"])
+    # Loại bỏ trùng lặp, ưu tiên ID bình luận từ Reddit nếu có.
+    has_comment_id = (
+        "comment_id" in df.columns
+        and df["comment_id"].fillna("").astype(str).str.strip().ne("").any()
+    )
+    dedup_cols = ["comment_id"] if has_comment_id else ["subreddit", "post_id", "text"]
+    df = df.drop_duplicates(subset=dedup_cols)
     
     # Loại bỏ bình luận quá ngắn
     df = df[df["text"].str.len() >= 5]

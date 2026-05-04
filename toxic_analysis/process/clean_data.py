@@ -130,7 +130,8 @@ def lam_sach_dataframe(
     text_col: str = "text",
     giu_emoji: bool = False,
     xoa_trung_lap: bool = True,
-    do_dai_toi_thieu: int = 5
+    do_dai_toi_thieu: int = 5,
+    duplicate_subset: list[str] | None = None
 ) -> pd.DataFrame:
     """
     Làm sạch toàn bộ DataFrame bình luận.
@@ -141,6 +142,8 @@ def lam_sach_dataframe(
         giu_emoji: Giữ lại emoji hay không
         xoa_trung_lap: Xóa bình luận trùng lặp
         do_dai_toi_thieu: Độ dài tối thiểu của văn bản sau khi làm sạch
+        duplicate_subset: Danh sách cột dùng để xác định trùng lặp.
+            Nếu bỏ trống, chỉ dùng cột văn bản.
     
     Returns:
         DataFrame đã làm sạch
@@ -148,28 +151,34 @@ def lam_sach_dataframe(
     if df.empty:
         logger.warning("⚠ DataFrame đầu vào rỗng!")
         return df
+    if text_col not in df.columns:
+        raise ValueError(f"DataFrame thiếu cột văn bản bắt buộc: {text_col}")
     
     so_truoc = len(df)
     logger.info(f"▶ Bắt đầu làm sạch {so_truoc} bình luận...")
     
     # Bước 1: Xóa dòng text bị null
-    df = df.dropna(subset=[text_col])
+    df = df.dropna(subset=[text_col]).copy()
     logger.info(f"  → Sau xóa null: {len(df)} dòng")
     
     # Bước 2: Làm sạch từng văn bản (hiển thị progress bar)
     tqdm.pandas(desc="  Làm sạch văn bản")
-    df[text_col] = df[text_col].progress_apply(
+    df.loc[:, text_col] = df[text_col].progress_apply(
         lambda x: lam_sach_van_ban(x, giu_emoji=giu_emoji)
     )
     
     # Bước 3: Xóa dòng văn bản quá ngắn sau khi làm sạch
-    df = df[df[text_col].str.len() >= do_dai_toi_thieu]
+    df = df[df[text_col].str.len() >= do_dai_toi_thieu].copy()
     logger.info(f"  → Sau lọc độ dài (≥{do_dai_toi_thieu}): {len(df)} dòng")
     
     # Bước 4: Xóa trùng lặp
     if xoa_trung_lap:
-        df = df.drop_duplicates(subset=[text_col])
-        logger.info(f"  → Sau xóa trùng lặp: {len(df)} dòng")
+        subset = duplicate_subset or [text_col]
+        subset = [c for c in subset if c in df.columns]
+        if not subset:
+            subset = [text_col]
+        df = df.drop_duplicates(subset=subset)
+        logger.info(f"  → Sau xóa trùng lặp theo {subset}: {len(df)} dòng")
     
     so_sau = len(df)
     logger.info(f"✓ Làm sạch xong: {so_truoc} → {so_sau} dòng "

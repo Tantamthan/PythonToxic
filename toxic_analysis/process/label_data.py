@@ -138,6 +138,43 @@ def _la_loi_quota(error_message: str) -> bool:
     return any(marker in text for marker in quota_markers)
 
 
+def _tao_khoa_ban_ghi(df: pd.DataFrame, text_col: str = "text") -> pd.Series:
+    """
+    Tạo khóa ổn định cho bình luận để cache gán nhãn không xóa nhầm các dòng
+    có cùng nội dung nhưng đến từ nguồn hoặc ID khác nhau.
+    """
+    if df.empty:
+        return pd.Series(dtype=str)
+
+    source = (
+        df["source"].fillna("").astype(str)
+        if "source" in df.columns
+        else pd.Series([""] * len(df), index=df.index)
+    )
+    text = (
+        df[text_col].fillna("").astype(str).str.strip()
+        if text_col in df.columns
+        else pd.Series([""] * len(df), index=df.index)
+    )
+
+    if "comment_id" in df.columns:
+        comment_id = df["comment_id"].fillna("").astype(str).str.strip()
+        has_comment_id = comment_id != ""
+    else:
+        comment_id = pd.Series([""] * len(df), index=df.index)
+        has_comment_id = pd.Series([False] * len(df), index=df.index)
+
+    parent_id = pd.Series([""] * len(df), index=df.index)
+    if "video_id" in df.columns:
+        parent_id = df["video_id"].fillna("").astype(str).str.strip()
+    if "post_id" in df.columns:
+        post_id = df["post_id"].fillna("").astype(str).str.strip()
+        parent_id = parent_id.where(parent_id != "", post_id)
+
+    fallback = source + "|text|" + parent_id + "|" + text
+    return (source + "|comment|" + comment_id).where(has_comment_id, fallback)
+
+
 def gan_nhan_gemini(
     df: pd.DataFrame,
     text_col: str = "text",
@@ -344,6 +381,8 @@ def phan_loai_va_di_chuyen(
         df_da_phan_loai = df_da_phan_loai[
             df_da_phan_loai["label"].isin(["CLEAN", "OFFENSIVE", "HATE"])
         ].copy()
+        if "record_key" not in df_da_phan_loai.columns:
+            df_da_phan_loai["record_key"] = _tao_khoa_ban_ghi(df_da_phan_loai, text_col)
         logger.info(
             f"  ♻ Đã tải {len(df_da_phan_loai)} comment đã phân loại "
             f"từ {labeled_path.name}"
@@ -369,6 +408,8 @@ def phan_loai_va_di_chuyen(
         # Đảm bảo có cột source
         if "source" not in df_platform.columns:
             df_platform["source"] = platform
+        if "record_key" not in df_platform.columns:
+            df_platform["record_key"] = _tao_khoa_ban_ghi(df_platform, text_col)
         
         platform_data[platform] = {
             "path": csv_path,
@@ -386,6 +427,9 @@ def phan_loai_va_di_chuyen(
     
     # Gộp tất cả comment chưa phân loại
     df_chua_phan_loai = pd.concat(tat_ca_chua_phan_loai, ignore_index=True)
+    if "record_key" not in df_chua_phan_loai.columns:
+        df_chua_phan_loai["record_key"] = _tao_khoa_ban_ghi(df_chua_phan_loai, text_col)
+    df_chua_phan_loai = df_chua_phan_loai.drop_duplicates(subset=["record_key"], keep="last")
     logger.info(f"  ▶ Tổng cần phân loại: {len(df_chua_phan_loai)} comment")
     
     # Giới hạn số lượng nếu cần
@@ -414,6 +458,8 @@ def phan_loai_va_di_chuyen(
     temp_path = data_path / "_temp_label_result.csv"
     if temp_path.exists():
         temp_path.unlink()
+    if "record_key" not in df_ket_qua.columns:
+        df_ket_qua["record_key"] = _tao_khoa_ban_ghi(df_ket_qua, text_col)
     
     # ── 4. Tách comment thành công vs thất bại ─────────────────────
     mask_thanh_cong = df_ket_qua["label"].isin(["CLEAN", "OFFENSIVE", "HATE"])
@@ -433,10 +479,10 @@ def phan_loai_va_di_chuyen(
     df_da_phan_loai = pd.concat(
         [df_da_phan_loai, df_thanh_cong], ignore_index=True
     )
-    # Loại trùng lặp dựa trên text + source
-    df_da_phan_loai = df_da_phan_loai.drop_duplicates(
-        subset=[text_col, "source"], keep="last"
-    )
+    if "record_key" not in df_da_phan_loai.columns:
+        df_da_phan_loai["record_key"] = _tao_khoa_ban_ghi(df_da_phan_loai, text_col)
+    # Loại trùng lặp bằng khóa ổn định, tránh gộp nhầm các nguồn khác nhau.
+    df_da_phan_loai = df_da_phan_loai.drop_duplicates(subset=["record_key"], keep="last")
     df_da_phan_loai.to_csv(labeled_path, index=False, encoding="utf-8-sig")
     logger.info(
         f"  ✓ Đã lưu {len(df_da_phan_loai)} comment đã phân loại "
@@ -444,11 +490,11 @@ def phan_loai_va_di_chuyen(
     )
     
     # ── 6. Xóa comment đã phân loại khỏi CSV nền tảng ─────────────
-    # Tạo set các text đã phân loại thành công, theo từng source
-    texts_thanh_cong_per_source = {}
+    # Tạo set các khóa đã phân loại thành công, theo từng source.
+    keys_thanh_cong_per_source = {}
     for source in df_thanh_cong["source"].unique():
-        texts_thanh_cong_per_source[source] = set(
-            df_thanh_cong[df_thanh_cong["source"] == source][text_col].tolist()
+        keys_thanh_cong_per_source[source] = set(
+            df_thanh_cong[df_thanh_cong["source"] == source]["record_key"].tolist()
         )
     
     for platform, filename in platform_files.items():
@@ -456,16 +502,20 @@ def phan_loai_va_di_chuyen(
         if not csv_path.exists():
             continue
         
-        texts_da_xong = texts_thanh_cong_per_source.get(platform, set())
-        if not texts_da_xong:
+        keys_da_xong = keys_thanh_cong_per_source.get(platform, set())
+        if not keys_da_xong:
             continue
         
         df_platform = pd.read_csv(csv_path, encoding="utf-8-sig")
+        if "source" not in df_platform.columns:
+            df_platform["source"] = platform
+        if "record_key" not in df_platform.columns:
+            df_platform["record_key"] = _tao_khoa_ban_ghi(df_platform, text_col)
         so_truoc = len(df_platform)
         
         # Xóa các comment đã phân loại thành công
         df_platform = df_platform[
-            ~df_platform[text_col].isin(texts_da_xong)
+            ~df_platform["record_key"].isin(keys_da_xong)
         ].copy()
         so_sau = len(df_platform)
         so_da_xoa = so_truoc - so_sau

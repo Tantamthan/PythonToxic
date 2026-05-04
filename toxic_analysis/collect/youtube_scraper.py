@@ -66,8 +66,10 @@ def lay_binh_luan_video(youtube_service, video_id: str, max_results: int = 500) 
             for item in response.get("items", []):
                 snippet = item["snippet"]["topLevelComment"]["snippet"]
                 binh_luan_list.append({
+                    "comment_id": item["snippet"]["topLevelComment"].get("id", item.get("id", "")),
                     "video_id": video_id,
                     "text": snippet.get("textDisplay", ""),
+                    "author": snippet.get("authorDisplayName", ""),
                     "like_count": snippet.get("likeCount", 0),
                     "published_at": snippet.get("publishedAt", ""),
                     "source": "youtube"
@@ -96,7 +98,7 @@ def lay_binh_luan_video(youtube_service, video_id: str, max_results: int = 500) 
 
 def thu_thap_youtube(
     video_ids: list[str] = None,
-    max_per_video: int = 500,
+    max_per_video: int = 50,
     output_path: str = "data/collected/youtube_comments.csv"
 ) -> pd.DataFrame:
     """
@@ -145,8 +147,14 @@ def thu_thap_youtube(
         logger.warning("⚠ Không thu thập được bình luận nào từ YouTube!")
         return df
     
-    # Loại bỏ bình luận trùng lặp
-    df = df.drop_duplicates(subset=["text"])
+    # Loại bỏ bình luận trùng lặp, ưu tiên ID nền tảng nếu có.
+    df = df[df["text"].astype(str).str.strip().str.len() > 0].copy()
+    has_comment_id = (
+        "comment_id" in df.columns
+        and df["comment_id"].fillna("").astype(str).str.strip().ne("").any()
+    )
+    dedup_cols = ["comment_id"] if has_comment_id else ["video_id", "text"]
+    df = df.drop_duplicates(subset=dedup_cols)
     
     # Tạo thư mục output nếu chưa có
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
