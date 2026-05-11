@@ -10,6 +10,7 @@ import os
 import time
 import logging
 import pandas as pd
+from pathlib import Path
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from dotenv import load_dotenv
@@ -22,6 +23,9 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 # Cấu hình logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_OUTPUT = BASE_DIR / "data" / "collected" / "youtube_comments.csv"
 
 
 DEFAULT_VIDEO_IDS = [
@@ -99,7 +103,7 @@ def lay_binh_luan_video(youtube_service, video_id: str, max_results: int = 500) 
 def thu_thap_youtube(
     video_ids: list[str] = None,
     max_per_video: int = 50,
-    output_path: str = "data/collected/youtube_comments.csv"
+    output_path: str = str(DEFAULT_OUTPUT)
 ) -> pd.DataFrame:
     """
     Thu thập bình luận từ nhiều video YouTube và lưu vào CSV.

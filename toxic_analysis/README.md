@@ -6,13 +6,21 @@ Thư mục này chứa source code chính của pipeline phân tích bình luậ
 
 ```powershell
 cd "E:\PROJECT PYTHON\New folder"
-.\.venv\Scripts\python.exe .\toxic_analysis\main.py --no-youtube --no-label
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --no-collected --no-label
 ```
 
-## Chạy đầy đủ với API
+## Crawl từng mạng xã hội
 
 ```powershell
-.\.venv\Scripts\python.exe .\toxic_analysis\main.py --max-per-video 200 --max-label-rows 100 --label-batch-size 5 --label-delay 8
+.\.venv\Scripts\python.exe .\toxic_analysis\collect\youtube_scraper.py
+.\.venv\Scripts\python.exe .\toxic_analysis\collect\reddit_scraper.py
+.\.venv\Scripts\python.exe .\toxic_analysis\collect\facebook_scraper.py --group-id 263510030791508
+```
+
+## Tổng hợp và gán nhãn Gemini
+
+```powershell
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --max-label-rows 100 --label-batch-size 5 --label-delay 8
 ```
 
 Nếu Gemini báo `503` hoặc `429`, giảm tải API:
@@ -32,16 +40,16 @@ Batch lỗi sẽ được đánh dấu `LABEL_ERROR`, không bị gán nhầm th
 ## Thư mục liên quan
 
 - `..\vihsd\`: chứa `train.csv`, `dev.csv`, `test.csv` hoặc các file dạng `._train.csv`, `._dev.csv`, `._test.csv`.
-- `data\collected\`: cache dữ liệu YouTube/Reddit và nhãn Gemini.
+- `data\collected\`: cache dữ liệu YouTube/Reddit/Facebook và nhãn Gemini.
 - `output\`: kết quả CSV và biểu đồ.
 - `output\summary.json`: báo cáo tóm tắt để dùng lại cho dashboard hoặc báo cáo HTML/PDF.
 
 ## Tinh chỉnh dữ liệu
 
-- Dữ liệu YouTube/Reddit lưu thêm `comment_id` và `author` nếu nền tảng trả về.
+- Dữ liệu YouTube/Reddit/Facebook lưu thêm `comment_id` và `author` nếu nền tảng trả về.
 - Cache gán nhãn dùng `record_key` để di chuyển/xóa đúng bình luận đã xử lý, tránh xóa nhầm các dòng có cùng nội dung ở nguồn khác.
 - Bước làm sạch xóa trùng theo `text + source`, không còn gộp toàn bộ chỉ theo nội dung bình luận.
-- Reddit mặc định lọc bình luận có vẻ là tiếng Việt. Nếu cần lấy cả tiếng Anh/song ngữ, thêm `--reddit-allow-non-vi`.
+- `main.py` không gọi crawler nữa; muốn có dữ liệu mạng xã hội nào thì chạy file scraper của mạng đó trước.
 
 ## File cấu hình
 
@@ -54,6 +62,10 @@ GEMINI_MODEL=gemini-2.5-flash
 REDDIT_CLIENT_ID=
 REDDIT_CLIENT_SECRET=
 REDDIT_USER_AGENT=toxic-analysis/1.0
+FACEBOOK_GROUP_ID=
+FACEBOOK_COOKIE=
+FACEBOOK_CHROMEDRIVER_PATH=
+FACEBOOK_BROWSER_BINARY=
 ```
 
 Xem thêm `..\README.md` và `..\docs\DATA_SCHEMA.md`.

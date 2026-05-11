@@ -8,7 +8,7 @@ Pipeline chuẩn hóa dữ liệu về các cột sau.
 | --- | --- | --- |
 | `text` | string | Nội dung bình luận đã chuẩn hóa về dạng text. |
 | `label` | string/null | Một trong `CLEAN`, `OFFENSIVE`, `HATE`; null với dữ liệu mới chưa gán nhãn. |
-| `source` | string | Nguồn dữ liệu: `vihsd`, `youtube`, `reddit`. |
+| `source` | string | Nguồn dữ liệu: `vihsd`, `youtube`, `reddit`, `facebook`. |
 | `split` | string | `train`, `dev`, `test`, hoặc `collected`. |
 
 ## Cột khuyến nghị
@@ -17,7 +17,8 @@ Pipeline chuẩn hóa dữ liệu về các cột sau.
 | --- | --- | --- |
 | `comment_id` | string | ID bình luận từ nền tảng gốc nếu có. |
 | `video_id` | string | ID video YouTube nếu có. |
-| `post_id` | string | ID bài Reddit nếu có. |
+| `post_id` | string | ID bài Reddit/Facebook nếu có. |
+| `facebook_group_id` | string | ID group Facebook nếu có. |
 | `author` | string | Tác giả đã thu thập được nếu có. |
 | `published_at` | datetime/null | Thời gian đăng bình luận. |
 | `labeled_by` | string | `ViHSD`, `Gemini_AI`, hoặc nguồn nhãn khác. |

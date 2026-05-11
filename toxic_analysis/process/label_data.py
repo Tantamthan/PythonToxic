@@ -372,6 +372,7 @@ def phan_loai_va_di_chuyen(
         platform_files = {
             "youtube": "youtube_comments.csv",
             "reddit": "reddit_comments.csv",
+            "facebook": "facebook_comments.csv",
         }
     
     # ── 1. Tải dữ liệu đã phân loại trước đó (nếu có) ─────────────

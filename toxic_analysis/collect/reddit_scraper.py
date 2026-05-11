@@ -14,11 +14,15 @@ import time
 import logging
 import requests
 import pandas as pd
+from pathlib import Path
 from datetime import datetime, timezone
 
 # Cấu hình logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_OUTPUT = BASE_DIR / "data" / "collected" / "reddit_comments.csv"
 
 
 # ─── CẤU HÌNH ───────────────────────────────────────────────────────────────
@@ -235,7 +239,7 @@ def thu_thap_reddit(
     max_posts_per_sub: int = 25,
     max_comments_per_post: int = 100,
     time_filter: str = "month",
-    output_path: str = "data/collected/reddit_comments.csv",
+    output_path: str = str(DEFAULT_OUTPUT),
     only_vietnamese: bool = True
 ) -> pd.DataFrame:
     """

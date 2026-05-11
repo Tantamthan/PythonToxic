@@ -18,10 +18,14 @@ import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data" / "collected"
-DEFAULT_SOURCE = DATA_DIR / "reddit_comments.csv"
 DEFAULT_REVIEW = DATA_DIR / "manual_review.csv"
 DEFAULT_LABELED = DATA_DIR / "labeled_collected.csv"
 VALID_LABELS = {"CLEAN", "OFFENSIVE", "HATE"}
+SOURCE_FILES = {
+    "youtube": "youtube_comments.csv",
+    "reddit": "reddit_comments.csv",
+    "facebook": "facebook_comments.csv",
+}
 
 
 try:
@@ -42,10 +46,14 @@ def write_csv(df: pd.DataFrame, path: Path) -> None:
     df.to_csv(path, index=False, encoding="utf-8-sig")
 
 
-def ensure_record_key(df: pd.DataFrame, text_col: str = "text") -> pd.DataFrame:
+def ensure_record_key(
+    df: pd.DataFrame,
+    text_col: str = "text",
+    default_source: str = "reddit",
+) -> pd.DataFrame:
     df = df.copy()
     if "source" not in df.columns:
-        df["source"] = "reddit"
+        df["source"] = default_source
     if "record_key" not in df.columns:
         df["record_key"] = _tao_khoa_ban_ghi(df, text_col)
     return df
@@ -91,7 +99,7 @@ def cmd_export(args: argparse.Namespace) -> None:
     if "text" not in source_df.columns:
         raise SystemExit(f"{args.source} must contain a 'text' column")
 
-    source_df = ensure_record_key(source_df)
+    source_df = ensure_record_key(source_df, default_source=args.platform)
     limit = min(args.limit, len(source_df)) if args.limit > 0 else len(source_df)
     review_df = source_df.head(limit).copy()
 
@@ -104,8 +112,11 @@ def cmd_export(args: argparse.Namespace) -> None:
             "label",
             "text",
             "comment_id",
+            "video_id",
             "subreddit",
+            "facebook_group_id",
             "post_id",
+            "post_url",
             "post_title",
             "author",
             "score",
@@ -131,7 +142,7 @@ def cmd_import(args: argparse.Namespace) -> None:
     if "text" not in review_df.columns:
         raise SystemExit(f"{args.review} must contain a 'text' column")
 
-    review_df = ensure_record_key(review_df)
+    review_df = ensure_record_key(review_df, default_source=args.platform)
     review_df["label"] = normalize_labels(review_df["label"])
 
     valid_mask = review_df["label"].isin(VALID_LABELS)
@@ -149,15 +160,15 @@ def cmd_import(args: argparse.Namespace) -> None:
 
     labeled_now["labeled_by"] = args.labeled_by
     if "source" not in labeled_now.columns:
-        labeled_now["source"] = "reddit"
+        labeled_now["source"] = args.platform
     if "split" not in labeled_now.columns:
         labeled_now["split"] = "collected"
 
     labeled_df = read_csv(args.labeled)
     if not labeled_df.empty:
-        labeled_df = ensure_record_key(labeled_df)
+        labeled_df = ensure_record_key(labeled_df, default_source=args.platform)
     combined = pd.concat([labeled_df, labeled_now], ignore_index=True, sort=False)
-    combined = ensure_record_key(combined)
+    combined = ensure_record_key(combined, default_source=args.platform)
     combined = combined[combined["label"].isin(VALID_LABELS)].copy()
     combined = combined.drop_duplicates(subset=["record_key"], keep="last")
     write_csv(combined, args.labeled)
@@ -165,7 +176,7 @@ def cmd_import(args: argparse.Namespace) -> None:
     source_df = read_csv(args.source)
     removed = 0
     if not source_df.empty:
-        source_df = ensure_record_key(source_df)
+        source_df = ensure_record_key(source_df, default_source=args.platform)
         done_keys = set(labeled_now["record_key"].astype(str))
         before = len(source_df)
         source_df = source_df[~source_df["record_key"].astype(str).isin(done_keys)].copy()
@@ -190,9 +201,10 @@ def cmd_import(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Export/import manual labels for collected Reddit comments."
+        description="Export/import manual labels for collected social comments."
     )
-    parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
+    parser.add_argument("--platform", choices=SOURCE_FILES.keys(), default="reddit")
+    parser.add_argument("--source", type=Path, default=None)
     parser.add_argument("--review", type=Path, default=DEFAULT_REVIEW)
     parser.add_argument("--labeled", type=Path, default=DEFAULT_LABELED)
 
@@ -221,6 +233,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.source is None:
+        args.source = DATA_DIR / SOURCE_FILES[args.platform]
     args.func(args)
 
 

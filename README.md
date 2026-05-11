@@ -1,7 +1,7 @@
 # Toxic Comment Analysis — Phân tích bình luận độc hại tiếng Việt
 
 Pipeline Python phân tích hành vi toxic trong bình luận mạng xã hội tiếng Việt.  
-Dữ liệu kết hợp từ **ViHSD** (dataset học thuật) và bình luận tự thu thập từ **YouTube** / **Reddit**, gán nhãn tự động bằng **Gemini AI**.
+Dữ liệu kết hợp từ **ViHSD** (dataset học thuật) và bình luận tự thu thập từ **YouTube** / **Reddit** / **Facebook**, gán nhãn tự động bằng **Gemini AI**.
 
 ---
 
@@ -9,7 +9,7 @@ Dữ liệu kết hợp từ **ViHSD** (dataset học thuật) và bình luận 
 
 | Tính năng | Mô tả |
 | --- | --- |
-| Thu thập đa nguồn | YouTube Data API, Reddit (PRAW), dataset ViHSD |
+| Thu thập đa nguồn | Chạy scraper riêng cho YouTube, Reddit, Facebook; `main.py` chỉ tổng hợp CSV và phân loại |
 | Gán nhãn tự động | Gemini API phân loại `CLEAN` / `OFFENSIVE` / `HATE` |
 | Gán nhãn thủ công | Export → Excel → Import khi Gemini hết quota |
 | Phân loại tăng dần | Comment đã gán nhãn chuyển vào `labeled_collected.csv`, xóa khỏi CSV nền tảng |
@@ -27,7 +27,8 @@ New folder/
 │   ├── main.py                  # Pipeline 5 bước
 │   ├── collect/                 # Thu thập dữ liệu
 │   │   ├── youtube_scraper.py   # Scraper YouTube Data API
-│   │   ├── reddit_scraper.py    # Scraper Reddit (PRAW) + lọc tiếng Việt
+│   │   ├── reddit_scraper.py    # Scraper Reddit + lọc tiếng Việt
+│   │   ├── facebook_scraper.py  # Scraper Facebook group bằng Selenium
 │   │   └── vihsd_loader.py      # Loader dataset ViHSD
 │   ├── process/                 # Xử lý dữ liệu
 │   │   ├── clean_data.py        # Làm sạch, chuẩn hóa, xóa trùng
@@ -39,6 +40,7 @@ New folder/
 │   ├── data/collected/          # Cache dữ liệu tự thu thập
 │   │   ├── youtube_comments.csv # Bình luận YouTube chưa gán nhãn
 │   │   ├── reddit_comments.csv  # Bình luận Reddit chưa gán nhãn
+│   │   ├── facebook_comments.csv# Bình luận Facebook chưa gán nhãn
 │   │   └── labeled_collected.csv# Tổng hợp tất cả comment đã gán nhãn
 │   └── output/                  # Kết quả phân tích
 │       ├── results.csv          # Dữ liệu cuối cùng (text, label, source)
@@ -58,7 +60,7 @@ New folder/
 ## Pipeline thực thi
 
 ```
-BƯỚC 1 → Thu thập dữ liệu (YouTube + Reddit + ViHSD)
+BƯỚC 1 → Tổng hợp CSV đã crawl sẵn (YouTube + Reddit + Facebook + ViHSD)
 BƯỚC 2 → Làm sạch dữ liệu (chuẩn hóa, xóa trùng, lọc ngắn)
 BƯỚC 3 → Gán nhãn tự động bằng Gemini (incremental labeling)
 BƯỚC 4 → Phân tích & thống kê mô tả
@@ -67,7 +69,7 @@ BƯỚC 5 → Trực quan hóa & xuất kết quả
 
 ### Quy trình gán nhãn tăng dần (Incremental Labeling)
 
-1. Đọc comment chưa phân loại từ CSV của từng nền tảng (`youtube_comments.csv`, `reddit_comments.csv`)
+1. Đọc comment chưa phân loại từ CSV của từng nền tảng (`youtube_comments.csv`, `reddit_comments.csv`, `facebook_comments.csv`)
 2. Gọi Gemini API gán nhãn theo batch
 3. Comment phân loại thành công → chuyển vào `labeled_collected.csv`
 4. Comment phân loại thành công → xóa khỏi CSV nền tảng gốc
@@ -95,6 +97,14 @@ GEMINI_MODEL=gemini-2.5-flash
 REDDIT_CLIENT_ID=<your_id>
 REDDIT_CLIENT_SECRET=<your_secret>
 REDDIT_USER_AGENT=toxic-analysis/1.0
+
+# Chỉ cần nếu thu thập Facebook
+FACEBOOK_GROUP_ID=<group_id>
+FACEBOOK_COOKIE=<your_facebook_cookie>
+FACEBOOK_CHROMEDRIVER_PATH=<optional_chromedriver_path>
+FACEBOOK_BROWSER_BINARY=<optional_browser_binary_path>
+FACEBOOK_POST_LIMIT=3
+FACEBOOK_COMMENT_LIMIT=10
 ```
 
 ### Thư viện sử dụng
@@ -112,39 +122,44 @@ REDDIT_USER_AGENT=toxic-analysis/1.0
 | `tqdm` | Progress bar |
 | `python-dotenv` | Đọc file `.env` |
 | `lxml`, `lxml_html_clean` | Parse HTML |
+| `selenium` | Crawl Facebook qua trình duyệt |
 
 ---
 
 ## Cách sử dụng
 
-### Chạy chỉ với ViHSD (không cần API)
+### 1. Crawl dữ liệu theo từng mạng xã hội
 
 ```powershell
-.\.venv\Scripts\python.exe .\toxic_analysis\main.py --no-youtube --no-label
+.\.venv\Scripts\python.exe .\toxic_analysis\collect\youtube_scraper.py
+.\.venv\Scripts\python.exe .\toxic_analysis\collect\reddit_scraper.py
+.\.venv\Scripts\python.exe .\toxic_analysis\collect\facebook_scraper.py --group-id 263510030791508
 ```
 
-### Chạy YouTube + ViHSD + Gemini
+Mỗi script sẽ tự lưu CSV vào `toxic_analysis\data\collected\`.
+
+### 2. Tổng hợp CSV và phân loại bằng Gemini
 
 ```powershell
-.\.venv\Scripts\python.exe .\toxic_analysis\main.py --max-per-video 200 --max-label-rows 100 --label-batch-size 5 --label-delay 8
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --max-label-rows 100 --label-batch-size 5 --label-delay 8
 ```
 
-### Thêm Reddit
+### Chỉ tổng hợp Facebook
 
 ```powershell
-.\.venv\Scripts\python.exe .\toxic_analysis\main.py --reddit --reddit-subs VietNam TroChuyenLinhTinh
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --sources facebook
 ```
 
-### Reddit cho phép bình luận không phải tiếng Việt
+### Chạy chỉ với ViHSD (không cần API mạng xã hội)
 
 ```powershell
-.\.venv\Scripts\python.exe .\toxic_analysis\main.py --reddit --reddit-allow-non-vi
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --no-collected --no-label
 ```
 
-### Chỉ định video YouTube cụ thể
+### Chỉ dùng CSV đã crawl, bỏ ViHSD
 
 ```powershell
-.\.venv\Scripts\python.exe .\toxic_analysis\main.py --video-ids abc123 def456
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --sources youtube reddit facebook --no-vihsd
 ```
 
 ---
@@ -155,14 +170,9 @@ REDDIT_USER_AGENT=toxic-analysis/1.0
 
 | Tham số | Mặc định | Mô tả |
 | --- | --- | --- |
-| `--no-youtube` | `False` | Bỏ qua thu thập YouTube |
-| `--reddit` | `False` | Bật thu thập Reddit |
-| `--max-per-video` | `500` | Số bình luận tối đa mỗi video YouTube |
-| `--video-ids` | — | Danh sách YouTube video ID tùy chỉnh |
-| `--reddit-subs` | Vietnam, VietNam, TroChuyenLinhTinh | Danh sách subreddit tùy chỉnh |
-| `--reddit-sort` | `hot` | Sắp xếp bài Reddit (`hot`/`new`/`top`/`controversial`) |
-| `--reddit-max-posts` | `50` | Số bài viết tối đa mỗi subreddit |
-| `--reddit-allow-non-vi` | `False` | Tắt bộ lọc tiếng Việt cho Reddit |
+| `--sources` | `youtube reddit facebook` | Danh sách CSV mạng xã hội cần gom từ `data/collected` |
+| `--no-vihsd` | `False` | Bỏ qua dataset ViHSD |
+| `--no-collected` | `False` | Bỏ qua toàn bộ CSV mạng xã hội, chỉ dùng ViHSD |
 
 ### Gán nhãn Gemini
 
@@ -267,7 +277,7 @@ Chi tiết tại [`docs/DATA_SCHEMA.md`](docs/DATA_SCHEMA.md).
 | --- | --- | --- |
 | `text` | string | Nội dung bình luận đã chuẩn hóa |
 | `label` | string | `CLEAN` / `OFFENSIVE` / `HATE` |
-| `source` | string | `vihsd`, `youtube`, `reddit` |
+| `source` | string | `vihsd`, `youtube`, `reddit`, `facebook` |
 | `split` | string | `train`, `dev`, `test`, `collected` |
 
 ### Cột bổ sung
@@ -275,7 +285,7 @@ Chi tiết tại [`docs/DATA_SCHEMA.md`](docs/DATA_SCHEMA.md).
 | Cột | Mô tả |
 | --- | --- |
 | `comment_id` | ID bình luận từ nền tảng gốc |
-| `video_id` / `post_id` | ID video YouTube / bài Reddit |
+| `video_id` / `post_id` / `facebook_group_id` | ID video YouTube / bài Reddit/Facebook / group Facebook |
 | `author` | Tác giả bình luận |
 | `published_at` | Thời gian đăng |
 | `labeled_by` | Nguồn nhãn (`ViHSD`, `Gemini_AI`, `Manual`) |

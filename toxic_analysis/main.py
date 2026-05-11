@@ -4,9 +4,9 @@ main.py
 Pipeline chính: Phân tích hành vi toxic trong bình luận mạng xã hội tiếng Việt.
 
 Thứ tự thực thi:
-  BƯỚC 1: Thu thập dữ liệu (YouTube + Reddit + ViHSD)
+  BƯỚC 1: Tổng hợp CSV đã crawl (YouTube + Reddit + Facebook + ViHSD)
   BƯỚC 2: Làm sạch dữ liệu
-  BƯỚC 3: Gán nhãn tự động bằng Gemini (cho dữ liệu YouTube & Reddit)
+  BƯỚC 3: Gán nhãn tự động bằng Gemini (cho dữ liệu mạng xã hội)
   BƯỚC 4: Phân tích & thống kê
   BƯỚC 5: Trực quan hóa & xuất kết quả
 
@@ -57,13 +57,20 @@ logger = logging.getLogger(__name__)
 
 
 # ─── IMPORT CÁC MODULE NỘI BỘ ───────────────────────────────────────────────
-from collect.youtube_scraper import thu_thap_youtube
-from collect.reddit_scraper  import thu_thap_reddit, la_binh_luan_tieng_viet
 from collect.vihsd_loader    import tai_vihsd
 from process.clean_data      import lam_sach_dataframe
 from process.label_data      import gan_nhan_gemini, phan_loai_va_di_chuyen
 from analyze.statistics      import chay_tat_ca_thong_ke
 from analyze.visualize       import ve_tat_ca_bieu_do
+from analyze.advanced_stats     import chay_phan_tich_nang_cao
+from analyze.advanced_visualize import ve_tat_ca_bieu_do_nang_cao
+
+
+COLLECTED_SOURCE_FILES = {
+    "youtube": "youtube_comments.csv",
+    "reddit": "reddit_comments.csv",
+    "facebook": "facebook_comments.csv",
+}
 
 
 # ─── HÀM TIỆN ÍCH ───────────────────────────────────────────────────────────
@@ -80,7 +87,7 @@ def _in_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║   PHÂN TÍCH HÀNH VI TOXIC BÌNH LUẬN MẠNG XÃ HỘI TIẾNG VIỆT ║
-║   Dataset: ViHSD + YouTube   |   Gemini AI Auto-Labeling     ║
+║   Dataset: ViHSD + Social CSV |   Gemini AI Auto-Labeling    ║
 ╚══════════════════════════════════════════════════════════════╝
 """
     print(banner)
@@ -131,126 +138,106 @@ def _luu_bao_cao_tom_tat(df: pd.DataFrame, saved_charts: list[str], path: str):
     logger.info(f"✓ Đã lưu báo cáo tóm tắt → {path}")
 
 
-# ─── BƯỚC 1: THU THẬP DỮ LIỆU ──────────────────────────────────────────────
+# ─── BƯỚC 1: TỔNG HỢP DỮ LIỆU ĐÃ CRAWL ─────────────────────────────────────
 
-def buoc_1_thu_thap(
-    thu_thap_youtube_flag: bool = True,
-    thu_thap_reddit_flag: bool = False,
-    max_youtube_per_video: int = 500,
-    video_ids: list = None,
-    reddit_subreddits: list = None,
-    reddit_sort: str = "hot",
-    reddit_max_posts: int = 50,
-    reddit_vi_only: bool = True
-) -> pd.DataFrame:
-    """
-    Thu thập dữ liệu từ YouTube, Reddit và tải ViHSD.
-    
-    Args:
-        thu_thap_youtube_flag: Có thu thập YouTube hay không
-        thu_thap_reddit_flag: Có thu thập Reddit hay không
-        max_youtube_per_video: Số bình luận tối đa mỗi video
-        video_ids: Danh sách ID video tùy chỉnh
-        reddit_subreddits: Danh sách subreddit tùy chỉnh
-        reddit_sort: Cách sắp xếp bài Reddit (hot/new/top/controversial)
-        reddit_max_posts: Số bài viết tối đa mỗi subreddit
-        reddit_vi_only: Chỉ giữ bình luận Reddit có vẻ là tiếng Việt
-    
-    Returns:
-        Tuple (DataFrame tổng hợp, DataFrame dữ liệu chưa gán nhãn)
-    """
-    logger.info("=" * 65)
-    logger.info("BƯỚC 1: THU THẬP DỮ LIỆU")
-    logger.info("=" * 65)
-    
-    tat_ca_df = []
-    df_chua_nhan = pd.DataFrame()  # Tổng hợp YouTube + Reddit (chưa có nhãn)
-    
-    # ── 1a. Thu thập YouTube ──────────────────────────────────────
-    if thu_thap_youtube_flag:
-        youtube_cache = DATA_DIR / "youtube_comments.csv"
-        
-        if youtube_cache.exists() and not video_ids:
-            logger.info(f"  ♻ Tìm thấy cache YouTube: {youtube_cache}")
-            df_youtube = pd.read_csv(youtube_cache, encoding="utf-8-sig")
-            logger.info(f"  ✓ Tải từ cache: {len(df_youtube)} bình luận")
-        else:
-            logger.info("  ▶ Thu thập bình luận YouTube mới...")
-            if video_ids:
-                logger.info(f"  (Bỏ qua cache vì bạn đang thu thập video ID tùy chỉnh: {video_ids})")
-            
-            df_youtube = thu_thap_youtube(
-                video_ids=video_ids,
-                max_per_video=max_youtube_per_video,
-                output_path=str(youtube_cache)
-            )
-        
-        if not df_youtube.empty:
-            df_youtube["label"]  = None
-            df_youtube["source"] = "youtube"
-            df_youtube["split"]  = "collected"
-            tat_ca_df.append(df_youtube)
-            df_chua_nhan = pd.concat([df_chua_nhan, df_youtube], ignore_index=True)
-            logger.info(f"  ✓ YouTube: {len(df_youtube)} bình luận")
-    
-    # ── 1b. Thu thập Reddit ───────────────────────────────────────
-    if thu_thap_reddit_flag:
-        reddit_cache = DATA_DIR / "reddit_comments.csv"
-        
-        if reddit_cache.exists() and not reddit_subreddits:
-            logger.info(f"  ♻ Tìm thấy cache Reddit: {reddit_cache}")
-            df_reddit = pd.read_csv(reddit_cache, encoding="utf-8-sig")
-            logger.info(f"  ✓ Tải từ cache: {len(df_reddit)} bình luận")
-        else:
-            logger.info("  ▶ Thu thập bình luận Reddit mới...")
-            df_reddit = thu_thap_reddit(
-                subreddits=reddit_subreddits,
-                sort_by=reddit_sort,
-                max_posts_per_sub=reddit_max_posts,
-                only_vietnamese=reddit_vi_only,
-                output_path=str(reddit_cache)
-            )
+def _doc_csv_nguon(source: str, csv_path: Path) -> pd.DataFrame:
+    """Đọc một file CSV đã crawl và chuẩn hóa các cột tối thiểu."""
+    try:
+        df = pd.read_csv(csv_path, encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        df = pd.read_csv(csv_path, encoding="utf-8")
 
-        if reddit_vi_only and not df_reddit.empty and "text" in df_reddit.columns:
-            so_truoc_loc = len(df_reddit)
-            df_reddit = df_reddit[
-                df_reddit["text"].apply(la_binh_luan_tieng_viet)
-            ].copy()
-            so_da_loc = so_truoc_loc - len(df_reddit)
-            if so_da_loc:
-                logger.info(f"  ✓ Đã lọc bỏ {so_da_loc} bình luận Reddit không giống tiếng Việt")
-                df_reddit.to_csv(reddit_cache, index=False, encoding="utf-8-sig")
-                logger.info(f"  ✓ Đã cập nhật lại cache Reddit sau lọc tiếng Việt: {reddit_cache}")
-        
-        if not df_reddit.empty:
-            df_reddit["label"] = None
-            if "source" not in df_reddit.columns:
-                df_reddit["source"] = "reddit"
-            df_reddit["split"] = "collected"
-            tat_ca_df.append(df_reddit)
-            df_chua_nhan = pd.concat([df_chua_nhan, df_reddit], ignore_index=True)
-            logger.info(f"  ✓ Reddit: {len(df_reddit)} bình luận")
-    
-    # ── 1c. Tải ViHSD ─────────────────────────────────────────────
-    logger.info(f"  ▶ Tải dataset ViHSD từ: {VIHSD_DIR}")
-    df_vihsd = tai_vihsd(vihsd_dir=str(VIHSD_DIR))
-    
-    if not df_vihsd.empty:
-        if "published_at" not in df_vihsd.columns:
-            df_vihsd["published_at"] = None
-        tat_ca_df.append(df_vihsd)
-        logger.info(f"  ✓ ViHSD: {len(df_vihsd)} mẫu")
+    if df.empty:
+        logger.info(f"  ℹ {csv_path.name} rỗng, bỏ qua")
+        return df
+
+    if "text" not in df.columns:
+        logger.warning(f"  ⚠ {csv_path.name} thiếu cột text, bỏ qua")
+        return pd.DataFrame()
+
+    df = df.copy()
+    df["text"] = df["text"].astype(str).str.strip()
+    df = df[df["text"].str.len() > 0].copy()
+
+    if "source" not in df.columns:
+        df["source"] = source
     else:
-        logger.warning("  ⚠ Không tải được dữ liệu ViHSD!")
-    
+        df["source"] = df["source"].fillna(source).replace("", source)
+
+    if "label" not in df.columns:
+        df["label"] = None
+    if "split" not in df.columns:
+        df["split"] = "collected"
+    if "published_at" not in df.columns:
+        df["published_at"] = None
+
+    logger.info(f"  ✓ {source}: {len(df)} bình luận từ {csv_path.name}")
+    return df
+
+
+def buoc_1_tong_hop_du_lieu(
+    sources: list[str] = None,
+    include_vihsd: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Tổng hợp dữ liệu đã crawl sẵn từ data/collected và tùy chọn ViHSD.
+
+    Main.py không gọi crawler nữa. Muốn lấy dữ liệu mạng xã hội nào thì chạy
+    file scraper riêng của mạng đó trước, sau đó main.py chỉ đọc CSV đã tạo.
+    """
+    logger.info("=" * 65)
+    logger.info("BƯỚC 1: TỔNG HỢP DỮ LIỆU ĐÃ CRAWL")
+    logger.info("=" * 65)
+
+    if sources is None:
+        sources = list(COLLECTED_SOURCE_FILES.keys())
+
+    unknown_sources = sorted(set(sources) - set(COLLECTED_SOURCE_FILES))
+    if unknown_sources:
+        logger.warning(f"  ⚠ Bỏ qua source chưa hỗ trợ: {', '.join(unknown_sources)}")
+
+    tat_ca_df = []
+    df_chua_nhan = pd.DataFrame()
+
+    for source in sources:
+        filename = COLLECTED_SOURCE_FILES.get(source)
+        if not filename:
+            continue
+
+        csv_path = DATA_DIR / filename
+        if not csv_path.exists():
+            logger.info(f"  ℹ Chưa có {filename}. Hãy chạy collect/{source}_scraper.py nếu cần.")
+            continue
+
+        df_source = _doc_csv_nguon(source, csv_path)
+        if df_source.empty:
+            continue
+
+        tat_ca_df.append(df_source)
+        mask_chua_nhan = ~df_source["label"].isin(["CLEAN", "OFFENSIVE", "HATE"])
+        df_chua_nhan = pd.concat([df_chua_nhan, df_source[mask_chua_nhan]], ignore_index=True)
+
+    if include_vihsd:
+        logger.info(f"  ▶ Tải dataset ViHSD từ: {VIHSD_DIR}")
+        df_vihsd = tai_vihsd(vihsd_dir=str(VIHSD_DIR))
+
+        if not df_vihsd.empty:
+            if "published_at" not in df_vihsd.columns:
+                df_vihsd["published_at"] = None
+            tat_ca_df.append(df_vihsd)
+            logger.info(f"  ✓ ViHSD: {len(df_vihsd)} mẫu")
+        else:
+            logger.warning("  ⚠ Không tải được dữ liệu ViHSD!")
+    else:
+        logger.info("  ℹ Bỏ qua ViHSD theo tham số --no-vihsd")
+
     if not tat_ca_df:
-        logger.error("✗ Không có dữ liệu nào! Pipeline dừng lại.")
+        logger.error("✗ Không có dữ liệu nào! Hãy chạy ít nhất một scraper hoặc bật ViHSD.")
         sys.exit(1)
-    
-    # Gộp tất cả
+
     df_all = pd.concat(tat_ca_df, ignore_index=True)
     logger.info(f"\n  ✓ BƯỚC 1 HOÀN TẤT: Tổng {len(df_all)} mẫu")
-    
+
     return df_all, df_chua_nhan
 
 
@@ -297,7 +284,7 @@ def buoc_3_gan_nhan(
     stop_on_quota: bool = True
 ) -> pd.DataFrame:
     """
-    Gán nhãn cho bình luận YouTube & Reddit bằng Gemini API.
+    Gán nhãn cho bình luận đã crawl bằng Gemini API.
     Sử dụng quy trình phân loại tăng dần (incremental labeling):
     
     - Comment phân loại thành công → chuyển vào labeled_collected.csv
@@ -307,7 +294,7 @@ def buoc_3_gan_nhan(
     
     Args:
         df: DataFrame tổng hợp đã làm sạch
-        df_collected_raw: DataFrame YouTube+Reddit gốc (chưa có nhãn)
+        df_collected_raw: DataFrame dữ liệu mạng xã hội gốc (chưa có nhãn)
         skip_cache: Nếu True, sẽ tiến hành gọi API dù đã có file cache.
     
     Returns:
@@ -321,11 +308,20 @@ def buoc_3_gan_nhan(
     df_co_nhan = df[df["label"].notna() & df["label"].isin(["CLEAN", "OFFENSIVE", "HATE"])].copy()
     
     # Kiểm tra xem có comment chưa phân loại trong CSV nền tảng không
-    platform_files = {}
-    if (DATA_DIR / "youtube_comments.csv").exists():
-        platform_files["youtube"] = "youtube_comments.csv"
-    if (DATA_DIR / "reddit_comments.csv").exists():
-        platform_files["reddit"] = "reddit_comments.csv"
+    selected_sources = set()
+    if "source" in df.columns:
+        selected_sources = {
+            str(source)
+            for source in df["source"].dropna().unique()
+            if str(source) in COLLECTED_SOURCE_FILES
+        }
+
+    platform_files = {
+        source: filename
+        for source, filename in COLLECTED_SOURCE_FILES.items()
+        if source in selected_sources
+        if (DATA_DIR / filename).exists()
+    }
     
     if not platform_files:
         logger.info("  ℹ Không tìm thấy CSV nền tảng nào, kiểm tra cache...")
@@ -399,44 +395,58 @@ def buoc_3_gan_nhan(
 
 # ─── BƯỚC 4: PHÂN TÍCH THỐNG KÊ ────────────────────────────────────────────
 
-def buoc_4_thong_ke(df: pd.DataFrame) -> dict:
+def buoc_4_thong_ke(df: pd.DataFrame) -> tuple[dict, dict]:
     """
-    Chạy toàn bộ phân tích thống kê.
+    Chạy toàn bộ phân tích thống kê (cơ bản + nâng cao).
     
     Args:
         df: DataFrame đầy đủ đã gán nhãn
     
     Returns:
-        Dict chứa kết quả thống kê
+        Tuple (stats cơ bản, stats nâng cao)
     """
     logger.info("=" * 65)
     logger.info("BƯỚC 4: PHÂN TÍCH & THỐNG KÊ")
     logger.info("=" * 65)
     
+    # 4a. Thống kê cơ bản
     stats = chay_tat_ca_thong_ke(df)
     
+    # 4b. Phân tích nâng cao (N-gram, Toxic Intensity, Correlation, Topic)
+    logger.info("")
+    advanced_stats = chay_phan_tich_nang_cao(df)
+    
     logger.info(f"✓ BƯỚC 4 HOÀN TẤT")
-    return stats
+    return stats, advanced_stats
 
 
 # ─── BƯỚC 5: TRỰC QUAN HÓA ─────────────────────────────────────────────────
 
-def buoc_5_truc_quan(df: pd.DataFrame, stats: dict):
+def buoc_5_truc_quan(df: pd.DataFrame, stats: dict, advanced_stats: dict):
     """
-    Vẽ tất cả biểu đồ và lưu kết quả cuối cùng.
+    Vẽ tất cả biểu đồ (cơ bản + nâng cao) và lưu kết quả cuối cùng.
     
     Args:
         df: DataFrame đầy đủ đã gán nhãn
-        stats: Dict kết quả thống kê từ Bước 4
+        stats: Dict kết quả thống kê cơ bản từ Bước 4
+        advanced_stats: Dict kết quả phân tích nâng cao từ Bước 4
     """
     logger.info("=" * 65)
     logger.info("BƯỚC 5: TRỰC QUAN HÓA")
     logger.info("=" * 65)
     
-    # Vẽ biểu đồ
+    # 5a. Vẽ biểu đồ cơ bản (01 → 06)
     saved_charts = ve_tat_ca_bieu_do(
         df, stats, output_dir=str(CHARTS_DIR)
     )
+    
+    # 5b. Vẽ biểu đồ nâng cao (07 → 11)
+    if advanced_stats:
+        logger.info("")
+        saved_advanced = ve_tat_ca_bieu_do_nang_cao(
+            advanced_stats, output_dir=str(CHARTS_DIR)
+        )
+        saved_charts.extend(saved_advanced)
     
     # Lưu kết quả tổng hợp
     results_path = OUTPUT_DIR / "results.csv"
@@ -476,10 +486,10 @@ def chay_pipeline(args):
     _tao_thu_muc()
     
     logger.info(f"Cấu hình:")
-    logger.info(f"  Thu thập YouTube : {'Bật' if not args.no_youtube else 'Tắt'}")
-    logger.info(f"  Thu thập Reddit  : {'Bật' if args.reddit else 'Tắt'}")
-    logger.info(f"  Reddit tiếng Việt: {'Bật' if args.reddit_vi_only else 'Tắt'}")
-    logger.info(f"  Max/video        : {args.max_per_video}")
+    logger.info(f"  Main.py mode     : Tổng hợp CSV đã crawl, không gọi scraper")
+    sources = [] if args.no_collected else args.sources
+    logger.info(f"  Sources          : {', '.join(sources) if sources else 'Không dùng CSV mạng xã hội'}")
+    logger.info(f"  Dữ liệu ViHSD    : {'Tắt' if args.no_vihsd else 'Bật'}")
     logger.info(f"  ViHSD dir        : {VIHSD_DIR}")
     logger.info(f"  Gán nhãn Gemini  : {'Bật' if not args.no_label else 'Tắt'}")
     logger.info(f"  Gemini batch     : {args.label_batch_size}")
@@ -489,16 +499,10 @@ def chay_pipeline(args):
     logger.info(f"  Gemini retries   : {args.label_retries}")
     logger.info(f"  Stop on quota    : {'Bật' if args.stop_on_quota else 'Tắt'}")
     
-    # ── Bước 1: Thu thập ──────────────────────────────────────────
-    df_all, df_collected = buoc_1_thu_thap(
-        thu_thap_youtube_flag=not args.no_youtube,
-        thu_thap_reddit_flag=args.reddit,
-        max_youtube_per_video=args.max_per_video,
-        video_ids=args.video_ids if args.video_ids else None,
-        reddit_subreddits=args.reddit_subs if args.reddit_subs else None,
-        reddit_sort=args.reddit_sort,
-        reddit_max_posts=args.reddit_max_posts,
-        reddit_vi_only=args.reddit_vi_only
+    # ── Bước 1: Tổng hợp CSV đã crawl ─────────────────────────────
+    df_all, df_collected = buoc_1_tong_hop_du_lieu(
+        sources=sources,
+        include_vihsd=not args.no_vihsd,
     )
     
     # ── Bước 2: Làm sạch ──────────────────────────────────────────
@@ -506,12 +510,7 @@ def chay_pipeline(args):
     
     # ── Bước 3: Gán nhãn ──────────────────────────────────────────
     if not args.no_label:
-        # Bỏ qua cache nhãn nếu người dùng dùng video/subreddit tùy chỉnh
-        phai_bo_qua_cache = (
-            (args.video_ids is not None)
-            or (args.reddit_subs is not None)
-            or args.refresh_label_cache
-        )
+        phai_bo_qua_cache = args.refresh_label_cache
         df_labeled = buoc_3_gan_nhan(
             df_clean,
             df_collected,
@@ -533,10 +532,10 @@ def chay_pipeline(args):
         sys.exit(1)
     
     # ── Bước 4: Thống kê ──────────────────────────────────────────
-    stats = buoc_4_thong_ke(df_labeled)
+    stats, advanced_stats = buoc_4_thong_ke(df_labeled)
     
     # ── Bước 5: Trực quan hóa ─────────────────────────────────────
-    buoc_5_truc_quan(df_labeled, stats)
+    buoc_5_truc_quan(df_labeled, stats, advanced_stats)
     
     # Thời gian thực thi
     elapsed = time.time() - thoi_gian_bat_dau
@@ -552,56 +551,37 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Ví dụ sử dụng:
-  python main.py                              # Chạy YouTube + ViHSD
-  python main.py --reddit                      # Thêm thu thập Reddit
-  python main.py --reddit --no-youtube         # Chỉ Reddit + ViHSD
-  python main.py --no-youtube --no-label       # Chỉ dùng ViHSD
-  python main.py --max-per-video 200           # Giới hạn 200 bình luận/video
-  python main.py --max-label-rows 100          # Giới hạn số bình luận gọi Gemini
+  python main.py                                      # Gom CSV YouTube/Reddit/Facebook + ViHSD, rồi gán nhãn Gemini
+  python main.py --sources facebook                  # Chỉ gom CSV Facebook + ViHSD
+  python main.py --sources youtube reddit --no-vihsd # Chỉ gom dữ liệu đã crawl từ YouTube/Reddit
+  python main.py --no-collected --no-label           # Chỉ dùng ViHSD, không cần API
+  python main.py --max-label-rows 100                # Giới hạn số bình luận gọi Gemini
   python main.py --label-batch-size 5 --label-delay 8
-  python main.py --refresh-label-cache         # Gán nhãn lại, bỏ cache cũ
-  python main.py --video-ids abc123 def456     # Chỉ định video cụ thể
-  python main.py --reddit --reddit-subs VietNam TroChuyenLinhTinh
-  python main.py --reddit --reddit-allow-non-vi # Tắt lọc tiếng Việt Reddit
+  python main.py --refresh-label-cache               # Gán nhãn lại, bỏ cache cũ
+
+Crawler chạy riêng:
+  python collect/youtube_scraper.py
+  python collect/reddit_scraper.py
+  python collect/facebook_scraper.py --group-id 263510030791508
         """
     )
-    
+
     parser.add_argument(
-        "--no-youtube", action="store_true",
-        help="Bỏ qua bước thu thập YouTube"
+        "--sources", nargs="+", default=list(COLLECTED_SOURCE_FILES.keys()),
+        choices=list(COLLECTED_SOURCE_FILES.keys()),
+        help="Nguồn CSV cần gom từ data/collected (mặc định: youtube reddit facebook)"
     )
     parser.add_argument(
-        "--reddit", action="store_true",
-        help="Bật thu thập bình luận từ Reddit"
+        "--no-vihsd", action="store_true",
+        help="Bỏ qua dataset ViHSD, chỉ dùng CSV đã crawl"
+    )
+    parser.add_argument(
+        "--no-collected", action="store_true",
+        help="Bỏ qua toàn bộ CSV mạng xã hội, chỉ dùng ViHSD"
     )
     parser.add_argument(
         "--no-label", action="store_true",
         help="Bỏ qua bước gán nhãn Gemini"
-    )
-    parser.add_argument(
-        "--max-per-video", type=int, default=500, dest="max_per_video",
-        help="Số bình luận tối đa mỗi video YouTube (mặc định: 500)"
-    )
-    parser.add_argument(
-        "--video-ids", nargs="+", dest="video_ids",
-        help="Danh sách YouTube video ID tùy chỉnh"
-    )
-    parser.add_argument(
-        "--reddit-subs", nargs="+", dest="reddit_subs",
-        help="Danh sách subreddit tùy chỉnh (mặc định: Vietnam VietNam TroChuyenLinhTinh)"
-    )
-    parser.add_argument(
-        "--reddit-sort", default="hot", dest="reddit_sort",
-        choices=["hot", "new", "top", "controversial"],
-        help="Cách sắp xếp bài viết Reddit (mặc định: hot)"
-    )
-    parser.add_argument(
-        "--reddit-max-posts", type=int, default=50, dest="reddit_max_posts",
-        help="Số bài viết tối đa mỗi subreddit (mặc định: 50)"
-    )
-    parser.add_argument(
-        "--reddit-allow-non-vi", action="store_false", dest="reddit_vi_only",
-        help="Tắt bộ lọc tiếng Việt cho Reddit"
     )
     parser.add_argument(
         "--label-batch-size", type=int, default=25, dest="label_batch_size",
