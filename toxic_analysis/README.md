@@ -23,6 +23,13 @@ cd "E:\PROJECT PYTHON\New folder"
 .\.venv\Scripts\python.exe .\toxic_analysis\main.py --max-label-rows 100 --label-batch-size 5 --label-delay 8
 ```
 
+Lọc bình luận gần giống nhau:
+
+```powershell
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --sources facebook --similarity-threshold 95
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --sources facebook --similarity-threshold 0
+```
+
 Nếu Gemini báo `503` hoặc `429`, giảm tải API:
 
 ```powershell
@@ -49,6 +56,7 @@ Batch lỗi sẽ được đánh dấu `LABEL_ERROR`, không bị gán nhầm th
 - Dữ liệu YouTube/Reddit/Facebook lưu thêm `comment_id` và `author` nếu nền tảng trả về.
 - Cache gán nhãn dùng `record_key` để di chuyển/xóa đúng bình luận đã xử lý, tránh xóa nhầm các dòng có cùng nội dung ở nguồn khác.
 - Bước làm sạch xóa trùng theo `text + source`, không còn gộp toàn bộ chỉ theo nội dung bình luận.
+- Bước làm sạch có thêm lọc trùng gần giống trong cùng `source` bằng `--similarity-threshold`.
 - `main.py` không gọi crawler nữa; muốn có dữ liệu mạng xã hội nào thì chạy file scraper của mạng đó trước.
 
 ## File cấu hình

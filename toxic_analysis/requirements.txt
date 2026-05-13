@@ -14,3 +14,4 @@ lxml_html_clean>=0.1.0
 tenacity>=8.2.0
 praw>=7.7.0
 selenium>=4.20.0
+rapidfuzz>=3.6.0

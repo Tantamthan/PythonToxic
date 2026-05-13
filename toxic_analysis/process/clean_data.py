@@ -16,6 +16,13 @@ import re
 import logging
 import pandas as pd
 from tqdm import tqdm
+from difflib import SequenceMatcher
+
+try:
+    from rapidfuzz import fuzz
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
 
 # Thử import underthesea (NLP tiếng Việt)
 try:
@@ -30,6 +37,8 @@ except ImportError:
 # Cấu hình logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+if not RAPIDFUZZ_AVAILABLE:
+    logger.info("ℹ rapidfuzz chưa được cài, dùng difflib để lọc trùng tương đồng.")
 
 # Từ điển viết tắt toxic phổ biến tiếng Việt
 VIET_ABBREVIATIONS = {
@@ -69,6 +78,90 @@ PATTERN_EMOJI   = re.compile(
 )
 PATTERN_REPEAT  = re.compile(r"(.)\1{3,}")  # Ký tự lặp 4+ lần
 PATTERN_SPACES  = re.compile(r"\s+")
+
+
+def _chuan_hoa_cho_so_sanh(text: str) -> str:
+    """Chuẩn hóa nhẹ để so độ giống nhau giữa các bình luận."""
+    text = str(text).lower()
+    text = re.sub(r"[^\w\sàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", " ", text)
+    return PATTERN_SPACES.sub(" ", text).strip()
+
+
+def _tao_block_key(text: str) -> tuple[str, int]:
+    """Tạo block nhỏ để lọc fuzzy nhanh hơn, tránh so mọi dòng với mọi dòng."""
+    normalized = _chuan_hoa_cho_so_sanh(text)
+    tokens = normalized.split()
+    prefix = " ".join(tokens[:2]) if len(tokens) >= 2 else normalized
+    length_bucket = len(normalized) // 20
+    return prefix, length_bucket
+
+
+def _diem_tuong_dong(a: str, b: str) -> float:
+    if RAPIDFUZZ_AVAILABLE:
+        return float(fuzz.token_set_ratio(a, b))
+    return SequenceMatcher(None, a, b).ratio() * 100
+
+
+def loai_bo_trung_tuong_dong(
+    df: pd.DataFrame,
+    text_col: str = "text",
+    threshold: int = 95,
+    group_cols: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Loại bình luận gần giống nhau bằng RapidFuzz.
+
+    threshold càng cao càng bảo thủ. Khuyến nghị 95 để chỉ loại các câu gần như trùng.
+    """
+    if df.empty or threshold <= 0:
+        return df
+    if not RAPIDFUZZ_AVAILABLE:
+        logger.warning("  ⚠ Không có rapidfuzz, bỏ qua lọc trùng theo độ tương đồng")
+        return df
+    if text_col not in df.columns:
+        return df
+
+    threshold = max(1, min(int(threshold), 100))
+    group_cols = [c for c in (group_cols or []) if c in df.columns]
+
+    keep_indices = []
+    buckets: dict[tuple, list[tuple[int, str]]] = {}
+    removed = 0
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="  Lọc trùng tương đồng"):
+        text = row.get(text_col, "")
+        normalized = _chuan_hoa_cho_so_sanh(text)
+        if not normalized:
+            removed += 1
+            continue
+
+        prefix, length_bucket = _tao_block_key(normalized)
+        group_key = tuple(str(row.get(col, "")) for col in group_cols)
+        is_duplicate = False
+
+        for near_bucket in (length_bucket - 1, length_bucket, length_bucket + 1):
+            bucket_key = group_key + (prefix, near_bucket)
+            for _, kept_text in buckets.get(bucket_key, []):
+                if _diem_tuong_dong(normalized, kept_text) >= threshold:
+                    is_duplicate = True
+                    break
+            if is_duplicate:
+                break
+
+        if is_duplicate:
+            removed += 1
+            continue
+
+        keep_indices.append(idx)
+        bucket_key = group_key + (prefix, length_bucket)
+        buckets.setdefault(bucket_key, []).append((idx, normalized))
+
+    if removed:
+        logger.info(f"  → Sau lọc trùng tương đồng ≥{threshold}%: {len(keep_indices)} dòng")
+    else:
+        logger.info(f"  → Không phát hiện trùng tương đồng ≥{threshold}%")
+
+    return df.loc[keep_indices].copy()
 
 
 def _mo_rong_viet_tat(text: str) -> str:
@@ -131,7 +224,9 @@ def lam_sach_dataframe(
     giu_emoji: bool = False,
     xoa_trung_lap: bool = True,
     do_dai_toi_thieu: int = 5,
-    duplicate_subset: list[str] | None = None
+    duplicate_subset: list[str] | None = None,
+    similarity_threshold: int = 0,
+    similarity_group_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Làm sạch toàn bộ DataFrame bình luận.
@@ -144,6 +239,8 @@ def lam_sach_dataframe(
         do_dai_toi_thieu: Độ dài tối thiểu của văn bản sau khi làm sạch
         duplicate_subset: Danh sách cột dùng để xác định trùng lặp.
             Nếu bỏ trống, chỉ dùng cột văn bản.
+        similarity_threshold: Ngưỡng 1-100 để xóa trùng gần giống; 0 là tắt.
+        similarity_group_cols: Chỉ so trùng tương đồng trong cùng nhóm cột này.
     
     Returns:
         DataFrame đã làm sạch
@@ -179,6 +276,15 @@ def lam_sach_dataframe(
             subset = [text_col]
         df = df.drop_duplicates(subset=subset)
         logger.info(f"  → Sau xóa trùng lặp theo {subset}: {len(df)} dòng")
+
+    # Bước 5: Xóa trùng gần giống theo độ tương đồng
+    if similarity_threshold and similarity_threshold > 0:
+        df = loai_bo_trung_tuong_dong(
+            df,
+            text_col=text_col,
+            threshold=similarity_threshold,
+            group_cols=similarity_group_cols,
+        )
     
     so_sau = len(df)
     logger.info(f"✓ Làm sạch xong: {so_truoc} → {so_sau} dòng "

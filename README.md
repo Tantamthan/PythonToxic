@@ -144,6 +144,13 @@ Mỗi script sẽ tự lưu CSV vào `toxic_analysis\data\collected\`.
 .\.venv\Scripts\python.exe .\toxic_analysis\main.py --max-label-rows 100 --label-batch-size 5 --label-delay 8
 ```
 
+Mặc định `main.py` sẽ lọc bình luận gần giống nhau với ngưỡng `95%`. Có thể chỉnh hoặc tắt:
+
+```powershell
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --sources facebook --similarity-threshold 92
+.\.venv\Scripts\python.exe .\toxic_analysis\main.py --sources facebook --similarity-threshold 0
+```
+
 ### Chỉ tổng hợp Facebook
 
 ```powershell
@@ -173,6 +180,7 @@ Mỗi script sẽ tự lưu CSV vào `toxic_analysis\data\collected\`.
 | `--sources` | `youtube reddit facebook` | Danh sách CSV mạng xã hội cần gom từ `data/collected` |
 | `--no-vihsd` | `False` | Bỏ qua dataset ViHSD |
 | `--no-collected` | `False` | Bỏ qua toàn bộ CSV mạng xã hội, chỉ dùng ViHSD |
+| `--similarity-threshold` | `95` | Ngưỡng lọc bình luận gần giống trong cùng nguồn; `0` để tắt |
 
 ### Gán nhãn Gemini
 

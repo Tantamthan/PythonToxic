@@ -140,21 +140,10 @@ def lay_bai_viet_subreddit(
 def lay_binh_luan_bai_viet(
     subreddit_name: str,
     post_id: str,
-    max_comments: int = 100,
+    max_comments: int = 50,
     only_vietnamese: bool = True
 ) -> list[dict]:
-    """
-    Lấy bình luận từ một bài viết bằng JSON API.
-    
-    Args:
-        subreddit_name: Tên subreddit
-        post_id: ID bài viết (t3_xxxxx → xxxxx)
-        max_comments: Số bình luận tối đa
-        only_vietnamese: Chỉ giữ bình luận có vẻ là tiếng Việt
-    
-    Returns:
-        Danh sách dict chứa bình luận
-    """
+
     url = f"https://www.reddit.com/r/{subreddit_name}/comments/{post_id}.json"
     params = {"limit": max_comments, "raw_json": 1, "sort": "top"}
     
@@ -242,21 +231,7 @@ def thu_thap_reddit(
     output_path: str = str(DEFAULT_OUTPUT),
     only_vietnamese: bool = True
 ) -> pd.DataFrame:
-    """
-    Thu thập bình luận từ nhiều subreddit tiếng Việt — KHÔNG CẦN API KEY.
-    
-    Args:
-        subreddits: Danh sách tên subreddit. Nếu None sẽ dùng mặc định
-        sort_by: hot/new/top/controversial
-        max_posts_per_sub: Số bài viết tối đa mỗi subreddit (max 100)
-        max_comments_per_post: Số bình luận tối đa mỗi bài
-        time_filter: Bộ lọc thời gian cho top/controversial
-        output_path: Đường dẫn file CSV lưu kết quả
-        only_vietnamese: Chỉ giữ bình luận có vẻ là tiếng Việt
-    
-    Returns:
-        DataFrame chứa toàn bộ bình luận thu thập được
-    """
+
     if subreddits is None:
         subreddits = DEFAULT_SUBREDDITS
     

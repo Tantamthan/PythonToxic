@@ -243,7 +243,7 @@ def buoc_1_tong_hop_du_lieu(
 
 # ─── BƯỚC 2: LÀM SẠCH DỮ LIỆU ─────────────────────────────────────────────
 
-def buoc_2_lam_sach(df: pd.DataFrame) -> pd.DataFrame:
+def buoc_2_lam_sach(df: pd.DataFrame, similarity_threshold: int = 95) -> pd.DataFrame:
     """
     Làm sạch toàn bộ dữ liệu bình luận.
     
@@ -263,7 +263,9 @@ def buoc_2_lam_sach(df: pd.DataFrame) -> pd.DataFrame:
         giu_emoji=False,
         xoa_trung_lap=True,
         do_dai_toi_thieu=5,
-        duplicate_subset=["text", "source"]
+        duplicate_subset=["text", "source"],
+        similarity_threshold=similarity_threshold,
+        similarity_group_cols=["source"],
     )
     
     logger.info(f"✓ BƯỚC 2 HOÀN TẤT: {len(df_clean)} mẫu sau làm sạch")
@@ -498,6 +500,7 @@ def chay_pipeline(args):
     logger.info(f"  Gemini model     : {args.gemini_model}")
     logger.info(f"  Gemini retries   : {args.label_retries}")
     logger.info(f"  Stop on quota    : {'Bật' if args.stop_on_quota else 'Tắt'}")
+    logger.info(f"  Lọc trùng giống  : {args.similarity_threshold}%")
     
     # ── Bước 1: Tổng hợp CSV đã crawl ─────────────────────────────
     df_all, df_collected = buoc_1_tong_hop_du_lieu(
@@ -506,7 +509,7 @@ def chay_pipeline(args):
     )
     
     # ── Bước 2: Làm sạch ──────────────────────────────────────────
-    df_clean = buoc_2_lam_sach(df_all)
+    df_clean = buoc_2_lam_sach(df_all, similarity_threshold=args.similarity_threshold)
     
     # ── Bước 3: Gán nhãn ──────────────────────────────────────────
     if not args.no_label:
@@ -556,6 +559,7 @@ Ví dụ sử dụng:
   python main.py --sources youtube reddit --no-vihsd # Chỉ gom dữ liệu đã crawl từ YouTube/Reddit
   python main.py --no-collected --no-label           # Chỉ dùng ViHSD, không cần API
   python main.py --max-label-rows 100                # Giới hạn số bình luận gọi Gemini
+  python main.py --similarity-threshold 95           # Lọc bình luận gần giống nhau
   python main.py --label-batch-size 5 --label-delay 8
   python main.py --refresh-label-cache               # Gán nhãn lại, bỏ cache cũ
 
@@ -582,6 +586,10 @@ Crawler chạy riêng:
     parser.add_argument(
         "--no-label", action="store_true",
         help="Bỏ qua bước gán nhãn Gemini"
+    )
+    parser.add_argument(
+        "--similarity-threshold", type=int, default=95, dest="similarity_threshold",
+        help="Ngưỡng 1-100 để loại bình luận gần giống trong cùng source; 0 là tắt (mặc định: 95)"
     )
     parser.add_argument(
         "--label-batch-size", type=int, default=25, dest="label_batch_size",

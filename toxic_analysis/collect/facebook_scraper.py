@@ -11,9 +11,11 @@ import argparse
 import csv
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from time import sleep
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -117,33 +119,81 @@ def is_valid_comment(text: str) -> bool:
     return not text.replace(" ", "").isdigit()
 
 
+def extract_post_id_from_href(href: str, group_id: str = "") -> str:
+    """Extract a Facebook group post ID from several common URL shapes."""
+    if not href:
+        return ""
+
+    href = unquote(href)
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query)
+
+    redirect_url = query.get("u", [""])[0]
+    if redirect_url:
+        redirected_id = extract_post_id_from_href(redirect_url, group_id)
+        if redirected_id:
+            return redirected_id
+
+    for key in ("multi_permalinks", "story_fbid", "fbid"):
+        value = query.get(key, [""])[0]
+        if value and value.isdigit():
+            return value
+
+    path = parsed.path.rstrip("/")
+    patterns = [
+        r"/groups/[^/]+/(?:posts|permalink)/(\d+)",
+        r"/groups/[^/]+/posts/(\d+)",
+        r"/groups/[^/]+/permalink/(\d+)",
+        r"/posts/(\d+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, path)
+        if match:
+            return match.group(1)
+
+    return ""
+
+
+def collect_candidate_hrefs(driver) -> list[str]:
+    hrefs = set()
+    try:
+        links = driver.find_elements(By.XPATH, '//a[@href]')
+        for link in links:
+            href = link.get_attribute("href") or ""
+            if href:
+                hrefs.add(href)
+    except Exception:
+        pass
+
+    try:
+        js_hrefs = driver.execute_script(
+            "return Array.from(document.querySelectorAll('a[href]')).map(a => a.href).filter(Boolean);"
+        )
+        for href in js_hrefs or []:
+            hrefs.add(href)
+    except Exception:
+        pass
+
+    return list(hrefs)
+
+
 def get_post_ids(driver, group_id: str, amount: int) -> list[str]:
     logger.info(f"Collecting post IDs from Facebook group: {group_id}")
-    driver.get(f"https://www.facebook.com/groups/{group_id}")
+    driver.get(f"https://www.facebook.com/groups/{group_id}?sorting_setting=CHRONOLOGICAL")
     sleep(4)
 
     post_ids = []
     scroll_count = 0
 
     while len(post_ids) < amount:
-        links = driver.find_elements(
-            By.XPATH,
-            '//a[contains(@href, "/posts/") and contains(@href, "/groups/")]',
-        )
-        for link in links:
-            try:
-                href = link.get_attribute("href") or ""
-                if "/posts/" not in href:
-                    continue
-
-                post_id = href.split("/posts/")[1].split("/")[0].split("?")[0]
-                if post_id.isdigit() and post_id not in post_ids:
-                    post_ids.append(post_id)
-                    logger.info(f"  Post ID: {post_id}")
-                    if len(post_ids) >= amount:
-                        break
-            except Exception:
-                pass
+        hrefs = collect_candidate_hrefs(driver)
+        for href in hrefs:
+            post_id = extract_post_id_from_href(href, group_id)
+            if post_id and post_id not in post_ids:
+                post_ids.append(post_id)
+                logger.info(f"  Post ID: {post_id}")
+                if len(post_ids) >= amount:
+                    break
 
         logger.info(f"  Collected posts: {len(post_ids)}/{amount}")
         if len(post_ids) >= amount:
@@ -154,14 +204,28 @@ def get_post_ids(driver, group_id: str, amount: int) -> list[str]:
         scroll_count += 1
         if scroll_count > 20:
             logger.warning("Stopped after 20 scrolls without enough posts.")
+            interesting_hrefs = [
+                href for href in hrefs
+                if "facebook.com/groups" in href or "permalink" in href or "story_fbid" in href
+            ][:8]
+            if interesting_hrefs:
+                logger.info("Sample Facebook links found:")
+                for href in interesting_hrefs:
+                    logger.info(f"  {href[:180]}")
             break
 
     return post_ids
 
 
-def get_comments(driver, post_id: str, group_id: str, max_comments: int) -> list[dict]:
+def get_comments(
+    driver,
+    post_id: str,
+    group_id: str,
+    max_comments: int,
+    post_url: str = "",
+) -> list[dict]:
     logger.info(f"Collecting comments from post: {post_id}")
-    post_url = f"https://www.facebook.com/groups/{group_id}/posts/{post_id}/"
+    post_url = post_url or f"https://www.facebook.com/groups/{group_id}/posts/{post_id}/"
     driver.get(post_url)
     sleep(3)
 
@@ -264,21 +328,37 @@ def thu_thap_facebook(
     chromedriver_path: str = "",
     browser_binary: str = "",
     append: bool = False,
+    post_urls: list[str] | None = None,
 ) -> pd.DataFrame:
     driver = init_driver(chromedriver_path=chromedriver_path, browser_binary=browser_binary)
     try:
         if not login_facebook(driver, cookie):
             return pd.DataFrame()
 
-        post_ids = get_post_ids(driver, group_id, so_luong_post)
+        post_refs = []
+        for url in post_urls or []:
+            post_id = extract_post_id_from_href(url, group_id)
+            if post_id:
+                post_refs.append((post_id, url))
+            else:
+                logger.warning(f"Cannot extract post ID from URL, skipped: {url}")
+
+        if not post_refs:
+            post_ids = get_post_ids(driver, group_id, so_luong_post)
+            post_refs = [
+                (post_id, f"https://www.facebook.com/groups/{group_id}/posts/{post_id}/")
+                for post_id in post_ids
+            ]
+
         all_rows = []
-        for post_id in post_ids:
+        for post_id, post_url in post_refs:
             all_rows.extend(
                 get_comments(
                     driver=driver,
                     post_id=post_id,
                     group_id=group_id,
                     max_comments=so_luong_comment_moi_post,
+                    post_url=post_url,
                 )
             )
 
@@ -302,6 +382,13 @@ def parse_args():
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--chromedriver", default=os.getenv("FACEBOOK_CHROMEDRIVER_PATH", ""))
     parser.add_argument("--browser-binary", default=os.getenv("FACEBOOK_BROWSER_BINARY", ""))
+    parser.add_argument(
+        "--post-url",
+        nargs="+",
+        default=[],
+        dest="post_urls",
+        help="Optional direct Facebook group post URL(s). Use this if group post discovery returns 0.",
+    )
     parser.add_argument("--append", action="store_true")
     return parser.parse_args()
 
@@ -320,5 +407,6 @@ if __name__ == "__main__":
         chromedriver_path=args.chromedriver,
         browser_binary=args.browser_binary,
         append=args.append,
+        post_urls=args.post_urls,
     )
     print(f"\nTotal Facebook comments collected: {len(df_result)}")
