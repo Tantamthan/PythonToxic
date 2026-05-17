@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"E:\\\\PROJECT PYTHON\\\\New folder\" | Where-Object { $_.Name -ne \".venv\" } | Select-Object Name, PSIsContainer)",
+      "PowerShell(& \"E:\\\\PROJECT PYTHON\\\\New folder\\\\.venv\\\\Scripts\\\\python.exe\" \"E:\\\\PROJECT PYTHON\\\\New folder\\\\draw_architecture.py\")",
+      "Bash(dir \"E:\\\\PROJECT PYTHON\\\\New folder\")",
+      "Bash(dir /s /b \"E:\\\\PROJECT PYTHON\\\\New folder\\\\*.ipynb\")",
+      "PowerShell(Get-ChildItem \"E:\\\\PROJECT PYTHON\\\\New folder\\\\toxic_analysis\\\\data\\\\collected\\\\\" | Select-Object Name, @{N='Size\\(KB\\)';E={[math]::Round\\($_.Length/1KB,1\\)}})",
+      "PowerShell(Get-Item \"E:\\\\PROJECT PYTHON\\\\New folder\\\\toxic_analysis\\\\phan_tich_toxic.ipynb\" | Select-Object Name, @{N='Size\\(KB\\)';E={[math]::Round\\($_.Length/1KB,1\\)}}, LastWriteTime)"
+    ]
+  }
+}
